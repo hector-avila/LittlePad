@@ -1,0 +1,85 @@
+# Builds LittlePad for Windows, macOS (Intel + Apple Silicon), and Linux.
+# Triggered by pushing a v* tag (e.g. v0.1.0) or manually from Actions.
+# Publishes plain executables for Windows/Linux, and a LittlePad.app bundle
+# (no .dmg) for macOS — see scripts/build-macos.sh for why macOS needs a
+# .app instead of a plain binary — as a draft Release on GitHub.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest        # Apple Silicon (arm64)
+            args: '--target aarch64-apple-darwin --bundles app'
+            uploadPlainBinary: false
+          - platform: macos-latest        # Intel (x86_64)
+            args: '--target x86_64-apple-darwin --bundles app'
+            uploadPlainBinary: false
+          - platform: ubuntu-22.04        # plain executable
+            args: '--no-bundle'
+            uploadPlainBinary: true
+          - platform: windows-latest      # plain .exe
+            args: '--no-bundle'
+            uploadPlainBinary: true
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: System dependencies (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
+            libfontconfig1-dev libfreetype6-dev pkg-config
+
+      - name: npm dependencies
+        run: npm ci
+
+      - name: Generate icons from app-icon.svg
+        run: npm run tauri icon app-icon.svg
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'LittlePad ${{ github.ref_name }}'
+          releaseBody: >-
+            Plain executables for Windows/Linux, and a LittlePad.app bundle
+            (no installer/.dmg) for macOS — generated automatically.
+          releaseDraft: true
+          # true (plain binary, requires --no-bundle) for Windows/Linux;
+          # false (upload the .app bundle tauri-action itself zips up,
+          # requires --bundles app) for macOS — see uploadPlainBinary per
+          # matrix entry above.
+          # https://github.com/tauri-apps/tauri-action#inputsuploadplainbinary
+          uploadPlainBinary: ${{ matrix.uploadPlainBinary }}
+          args: ${{ matrix.args }}

@@ -1,0 +1,14 @@
+# Artefactos y dependencias que no deben entrar al contexto de build
+node_modules
+dist
+out
+src-tauri/target
+src-tauri/gen/schemas
+*.log
+.git
+.vscode
+.github
+docker
+scripts
+.dockerignore
+README.md

@@ -1,0 +1,980 @@
+:root {
+  --bg: #21252b;
+  --bg-panel: #282c34;
+  --bg-active: #2c313a;
+  --fg: #abb2bf;
+  --fg-dim: #6b717d;
+  --accent: #61afef;
+  --border: #181a1f;
+  --error: #e06c75;
+  --font-ui: system-ui, 'Segoe UI', sans-serif;
+  --font-mono-fallback: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+  --editor-font-family: var(--font-mono-fallback);
+  --editor-font-size: 13px;
+}
+
+/* Bundled fonts — see the LICENCE file in each font's folder under
+   public/fonts for details:
+   Ubuntu Monospace: https://canonical.com/legal/font-licence
+   MesloLGS NF: https://github.com/romkatv/dotfiles-public/tree/master/.local/share/fonts/NerdFonts */
+@font-face {
+  font-family: 'Ubuntu Monospace';
+  src: url('/fonts/Ubuntu%20Monospace/UbuntuMono-R.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Ubuntu Monospace';
+  src: url('/fonts/Ubuntu%20Monospace/UbuntuMono-B.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Ubuntu Monospace';
+  src: url('/fonts/Ubuntu%20Monospace/UbuntuMono-RI.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Ubuntu Monospace';
+  src: url('/fonts/Ubuntu%20Monospace/UbuntuMono-BI.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'MesloLGS NF';
+  src: url('/fonts/MesloLGS%20NF/MesloLGS%20NF%20Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'MesloLGS NF';
+  src: url('/fonts/MesloLGS%20NF/MesloLGS%20NF%20Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'MesloLGS NF';
+  src: url('/fonts/MesloLGS%20NF/MesloLGS%20NF%20Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'MesloLGS NF';
+  src: url('/fonts/MesloLGS%20NF/MesloLGS%20NF%20Bold%20Italic.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── TabBar (includes the ☰ menu button, flush with the tabs) ──── */
+.tabbar-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.tabbar-row .menu-button {
+  flex: none;
+  align-self: center;
+  margin: 0 2px 0 4px;
+}
+
+.tabbar {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 10px;
+  max-width: 220px;
+  min-width: 0;
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+  color: var(--fg-dim);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: var(--bg-panel);
+  color: var(--fg);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-dirty {
+  color: var(--accent);
+}
+
+.tab-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #3b4048;
+  color: var(--fg);
+  flex: none;
+}
+
+/* Colores por tipo detectado */
+.lang-json      { background: #2d4a35; color: #98c379; }
+.lang-xml       { background: #4a3a2d; color: #d19a66; }
+.lang-yaml      { background: #2d3a4a; color: #61afef; }
+.lang-toml      { background: #43304a; color: #c678dd; }
+.lang-ini       { background: #45424a; color: #d7dae0; }
+.lang-log       { background: #4a2d2d; color: #e06c75; }
+.lang-javascript{ background: #4a452d; color: #e5c07b; }
+.lang-java      { background: #3a2d4a; color: #b48ead; }
+.lang-python    { background: #2d464a; color: #56b6c2; }
+.lang-markdown  { background: #33394a; color: #a9b8e8; }
+.lang-plain     { background: #3b4048; color: #9da5b4; }
+
+.tab-close {
+  border: none;
+  background: none;
+  color: var(--fg-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 3px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.tab-close:hover {
+  background: #4b5261;
+  color: #fff;
+}
+
+.tab-new {
+  border: none;
+  background: none;
+  color: var(--fg-dim);
+  font-size: 18px;
+  padding: 0 12px;
+  cursor: pointer;
+  flex: none;
+}
+
+.tab-new:hover {
+  color: var(--fg);
+}
+
+.tab-rename {
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--fg);
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  width: 120px;
+}
+
+/* ── ☰ menu (button + dropdown, lives inside .tabbar-row) ── */
+.menu-button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg);
+  padding: 3px 9px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.menu-button:hover {
+  background: var(--bg-active);
+  border-color: #3b4048;
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 4px;
+  z-index: 16;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.menu-dropdown button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+  text-align: left;
+}
+
+.menu-dropdown button:hover:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.menu-dropdown button:disabled {
+  color: var(--fg-dim);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.menu-shortcut {
+  color: var(--fg-dim);
+  font-size: 11px;
+  flex: none;
+}
+
+.menu-sep {
+  height: 1px;
+  background: #3b4048;
+  margin: 4px 6px;
+}
+
+/* ── Banner ─────────────────────────────────────────────── */
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 12px;
+  flex: none;
+}
+
+.banner-info {
+  background: #2d4a35;
+  color: #98c379;
+}
+
+.banner-error {
+  background: #4a2d2d;
+  color: #e06c75;
+}
+
+.banner button {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+/* ── Editor ─────────────────────────────────────────────── */
+.editor-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Holds the actual CodeMirror instance; the find/replace dialog is a normal
+   flow sibling above it (not an overlay), so opening it pushes the text down
+   instead of covering the lines being searched. */
+.editor-surface {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.editor-host .cm-editor {
+  height: 100%;
+}
+
+.editor-host .cm-editor.cm-focused {
+  outline: none;
+}
+
+.editor-host .cm-scroller {
+  font-family: var(--editor-font-family);
+  font-size: var(--editor-font-size);
+}
+
+.editor-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-dim);
+  background: var(--bg-panel);
+  z-index: 5;
+}
+
+.editor-empty .hint {
+  font-size: 12px;
+}
+
+/* ── Find and replace ───────────────────────────────────── */
+/* Normal flow (not an overlay): pushes .editor-surface down so it never
+   covers the text being searched/replaced. */
+.find-replace-dialog {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.fr-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fr-row input[type='text'] {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid #3b4048;
+  color: var(--fg);
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+}
+
+.fr-row button {
+  background: transparent;
+  border: 1px solid #3b4048;
+  color: var(--fg);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  flex: none;
+}
+
+.fr-row button:hover {
+  background: var(--bg-active);
+}
+
+.fr-close {
+  border-color: transparent !important;
+  font-size: 15px;
+}
+
+.fr-options {
+  color: var(--fg-dim);
+  gap: 6px;
+}
+
+.fr-row .fr-icon-toggle {
+  background: transparent;
+  border: 1px solid #3b4048;
+  color: var(--fg-dim);
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-mono-fallback);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.fr-row .fr-icon-toggle:hover {
+  background: var(--bg-active);
+}
+
+.fr-row .fr-icon-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-panel);
+}
+
+.fr-status {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.fr-error {
+  color: var(--error);
+}
+
+/* ── Settings dialog ────────────────────────────────────── */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.settings-dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  min-width: 360px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  user-select: none;
+}
+
+.settings-dialog input,
+.settings-dialog textarea,
+.settings-dialog select {
+  user-select: text;
+}
+
+.settings-dialog-split {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  height: 480px;
+  max-height: calc(100vh - 32px);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex: none;
+}
+
+.settings-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 16px;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  flex: none;
+  width: 170px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+/* Thin, unobtrusive scrollbar (no up/down buttons) for the Settings dialog's
+   scrollable panes. */
+.settings-nav,
+.settings-content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.settings-nav::-webkit-scrollbar,
+.settings-content::-webkit-scrollbar {
+  width: 9px;
+}
+
+.settings-nav::-webkit-scrollbar-track,
+.settings-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-nav::-webkit-scrollbar-thumb,
+.settings-content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+  /* Insets the visible thumb within the wider track above, so it reads as
+     a slim line with breathing room instead of touching the text. */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.settings-nav::-webkit-scrollbar-button,
+.settings-content::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.settings-nav-item {
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.settings-nav-item.active {
+  background: var(--bg-active);
+  color: var(--fg);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 12px;
+}
+
+.settings-header h2 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.settings-header button {
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.settings-subheading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--fg-dim);
+  margin: 14px 0 2px;
+}
+
+.settings-subheading:first-of-type {
+  margin-top: 0;
+}
+
+.settings-hint {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+}
+
+.settings-row.settings-row-column {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  border-top: none;
+}
+
+.settings-path {
+  background: var(--bg);
+  border: 1px solid #3b4048;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+  color: var(--fg-dim);
+  word-break: break-all;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 12.5px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-row:first-of-type {
+  border-top: none;
+}
+
+.shortcut-btn,
+.shortcut-input {
+  background: var(--bg);
+  border: 1px solid #3b4048;
+  color: var(--fg);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  min-width: 110px;
+  text-align: center;
+}
+
+.shortcut-input.recording {
+  border-color: var(--accent);
+  color: var(--accent);
+  cursor: default;
+}
+
+.settings-error {
+  color: var(--error);
+  font-size: 11.5px;
+  margin-top: 4px;
+}
+
+.settings-number-input {
+  background: var(--bg);
+  border: 1px solid #3b4048;
+  color: var(--fg);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  padding: 4px 8px;
+  width: 60px;
+  text-align: center;
+}
+
+.settings-number-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid #3b4048;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  padding: 4px 10px;
+  cursor: pointer;
+  min-width: 200px;
+}
+
+.settings-select:hover {
+  border-color: var(--accent);
+}
+
+.settings-select option,
+.settings-select optgroup {
+  background: var(--bg-panel);
+  color: var(--fg);
+}
+
+.settings-font-license {
+  margin: -2px 0 8px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.settings-font-license button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.settings-font-license button:hover {
+  color: var(--fg);
+}
+
+.settings-subheading-danger {
+  color: var(--error);
+}
+
+.danger-btn {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.danger-btn:hover {
+  background: var(--error);
+  color: var(--bg);
+}
+
+/* ── About / changelog ──────────────────────────────────── */
+.about-version {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.about-version-number {
+  color: var(--fg-dim);
+}
+
+.changelog h1 {
+  font-size: 14px;
+  margin: 16px 0 6px;
+}
+
+.changelog h1:first-child {
+  margin-top: 0;
+}
+
+.changelog h2 {
+  font-size: 12.5px;
+  color: var(--accent);
+  margin: 14px 0 6px;
+}
+
+.changelog h3 {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--fg-dim);
+  margin: 10px 0 4px;
+}
+
+.changelog p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.changelog ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.changelog li {
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+/* ── Close confirmation (Save / Don't Save / Cancel) ─────── */
+.close-confirm-dialog {
+  min-width: 320px;
+  max-width: 420px;
+}
+
+.close-confirm-dialog p {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.close-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.close-confirm-actions button {
+  background: var(--bg);
+  border: 1px solid #3b4048;
+  color: var(--fg);
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+.close-confirm-actions button:hover {
+  background: var(--bg-active);
+}
+
+.close-confirm-actions button:first-child {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+.close-confirm-actions button:first-child:hover {
+  filter: brightness(1.08);
+}
+
+/* ── StatusBar ──────────────────────────────────────────── */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 3px 10px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  flex: none;
+}
+
+.status-spacer {
+  flex: 1;
+}
+
+.lang-select-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.lang-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid #3b4048;
+  border-radius: 3px;
+  font-size: 11.5px;
+  font-family: var(--font-ui);
+  padding: 1px 18px 1px 6px;
+  cursor: pointer;
+}
+
+.lang-select:hover {
+  border-color: var(--accent);
+}
+
+.lang-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.lang-select option {
+  background: var(--bg-panel);
+  color: var(--fg);
+}
+
+.lang-select-wrap::after {
+  content: '▾';
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+  color: var(--fg-dim);
+  pointer-events: none;
+}
+
+.wrap-toggle {
+  background: var(--bg-panel);
+  color: var(--fg-dim);
+  border: 1px solid #3b4048;
+  border-radius: 3px;
+  font-size: 11.5px;
+  font-family: var(--font-ui);
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.wrap-toggle:hover {
+  border-color: var(--accent);
+}
+
+.wrap-toggle.active {
+  background: var(--bg-active);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.column-mode-badge {
+  background: var(--bg-active);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  font-size: 11.5px;
+  padding: 1px 8px;
+  cursor: default;
+}
+
+.save-status {
+  color: #98c379;
+}
+
+.save-status.error {
+  color: var(--error);
+}
+
+/* ── Drag & drop overlay ────────────────────────────────── */
+.drag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(40, 44, 52, 0.85);
+  pointer-events: none;
+}
+
+.drag-overlay-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 32px 48px;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  color: var(--fg);
+  font-size: 15px;
+  font-family: var(--font-ui);
+}
+
+.drag-overlay-icon {
+  font-size: 36px;
+}
