@@ -11,6 +11,10 @@
   --font-mono-fallback: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
   --editor-font-family: var(--font-mono-fallback);
   --editor-font-size: 13px;
+  /* Scales the UI chrome's text (toolbar, menus, dialogs, status bar…) —
+     set from Settings via `--ui-font-scale` on .app, independent of the
+     editor's own font size above. 1 = the default interface text size. */
+  --ui-font-scale: 1;
 }
 
 /* Bundled fonts — see the LICENCE file in each font's folder under
@@ -95,7 +99,7 @@ body,
 
 body {
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   background: var(--bg);
   color: var(--fg);
 }
@@ -161,7 +165,7 @@ body {
 }
 
 .tab-badge {
-  font-size: 9px;
+  font-size: calc(9px * var(--ui-font-scale));
   font-weight: 700;
   padding: 1px 5px;
   border-radius: 3px;
@@ -187,7 +191,7 @@ body {
   border: none;
   background: none;
   color: var(--fg-dim);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   cursor: pointer;
   padding: 0 3px;
   border-radius: 3px;
@@ -203,7 +207,7 @@ body {
   border: none;
   background: none;
   color: var(--fg-dim);
-  font-size: 18px;
+  font-size: calc(18px * var(--ui-font-scale));
   padding: 0 12px;
   cursor: pointer;
   flex: none;
@@ -217,7 +221,7 @@ body {
   background: var(--bg);
   border: 1px solid var(--accent);
   color: var(--fg);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   padding: 1px 4px;
   border-radius: 3px;
   width: 120px;
@@ -231,7 +235,7 @@ body {
   padding: 3px 9px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   line-height: 1.4;
 }
 
@@ -273,7 +277,7 @@ body {
   padding: 6px 10px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale));
   font-family: var(--font-ui);
   text-align: left;
 }
@@ -290,7 +294,7 @@ body {
 
 .menu-shortcut {
   color: var(--fg-dim);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale));
   flex: none;
 }
 
@@ -306,7 +310,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   flex: none;
 }
 
@@ -324,7 +328,7 @@ body {
   background: none;
   border: none;
   color: inherit;
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale));
   cursor: pointer;
 }
 
@@ -371,7 +375,7 @@ body {
 }
 
 .editor-empty .hint {
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
 }
 
 /* ── Find and replace ───────────────────────────────────── */
@@ -385,7 +389,7 @@ body {
   padding: 8px 10px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
 }
 
 .fr-row {
@@ -402,7 +406,7 @@ body {
   color: var(--fg);
   padding: 4px 6px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-family: var(--font-ui);
 }
 
@@ -413,7 +417,7 @@ body {
   padding: 3px 8px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   flex: none;
 }
 
@@ -423,7 +427,7 @@ body {
 
 .fr-close {
   border-color: transparent !important;
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale));
 }
 
 .fr-options {
@@ -439,7 +443,7 @@ body {
   border-radius: 4px;
   cursor: pointer;
   font-family: var(--font-mono-fallback);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-weight: 600;
   line-height: 1.4;
 }
@@ -493,10 +497,15 @@ body {
 .settings-dialog-split {
   display: flex;
   flex-direction: column;
-  width: 560px;
+  /* Actual width/height come from an inline style driven by
+     `settings.settingsDialogSize` (see SettingsDialog.tsx) — these are just
+     bounds. Resizable by dragging the bottom-right corner; the new size is
+     picked up via ResizeObserver and persisted for next time. */
+  min-height: 360px;
   max-width: calc(100vw - 32px);
-  height: 480px;
   max-height: calc(100vh - 32px);
+  resize: both;
+  overflow: hidden;
 }
 
 .settings-header {
@@ -568,7 +577,7 @@ body {
   text-align: left;
   padding: 7px 10px;
   border-radius: 4px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale));
   font-family: var(--font-ui);
   cursor: pointer;
 }
@@ -592,7 +601,7 @@ body {
 }
 
 .settings-header h2 {
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   margin: 0;
 }
 
@@ -600,12 +609,12 @@ body {
   background: none;
   border: none;
   color: var(--fg);
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-font-scale));
   cursor: pointer;
 }
 
 .settings-subheading {
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale));
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -619,7 +628,7 @@ body {
 
 .settings-hint {
   margin: 0 0 8px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale));
   color: var(--fg-dim);
 }
 
@@ -635,7 +644,7 @@ body {
   border: 1px solid #3b4048;
   border-radius: 4px;
   padding: 6px 8px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale));
   font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
   color: var(--fg-dim);
   word-break: break-all;
@@ -647,7 +656,7 @@ body {
   justify-content: space-between;
   gap: 12px;
   padding: 6px 0;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale));
   border-top: 1px solid var(--border);
 }
 
@@ -662,7 +671,7 @@ body {
   color: var(--fg);
   padding: 4px 10px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-family: var(--font-ui);
   cursor: pointer;
   min-width: 110px;
@@ -677,7 +686,7 @@ body {
 
 .settings-error {
   color: var(--error);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale));
   margin-top: 4px;
 }
 
@@ -686,7 +695,7 @@ body {
   border: 1px solid #3b4048;
   color: var(--fg);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-family: var(--font-ui);
   padding: 4px 8px;
   width: 60px;
@@ -698,6 +707,49 @@ body {
   border-color: var(--accent);
 }
 
+/* ── File associations (Windows/Linux interactive, macOS static) ────  */
+.ext-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 12px;
+}
+
+.ext-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg);
+  border: 1px solid #3b4048;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: calc(11.5px * var(--ui-font-scale));
+  font-family: var(--font-mono-fallback);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ext-chip:has(input:checked) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ext-chip input {
+  cursor: pointer;
+}
+
+/* macOS's fixed, non-interactive list (see the "File associations" section). */
+.ext-chip-static {
+  cursor: default;
+  color: var(--fg-dim);
+}
+
+.ext-input {
+  flex: 1;
+  width: auto;
+  text-align: left;
+}
+
 .settings-select {
   appearance: none;
   -webkit-appearance: none;
@@ -705,7 +757,7 @@ body {
   color: var(--fg);
   border: 1px solid #3b4048;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-family: var(--font-ui);
   padding: 4px 10px;
   cursor: pointer;
@@ -724,7 +776,7 @@ body {
 
 .settings-font-license {
   margin: -2px 0 8px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale));
   color: var(--fg-dim);
 }
 
@@ -760,7 +812,7 @@ body {
 /* ── About / changelog ──────────────────────────────────── */
 .about-version {
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
 }
 
 .about-version-number {
@@ -768,7 +820,7 @@ body {
 }
 
 .changelog h1 {
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   margin: 16px 0 6px;
 }
 
@@ -777,13 +829,13 @@ body {
 }
 
 .changelog h2 {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale));
   color: var(--accent);
   margin: 14px 0 6px;
 }
 
 .changelog h3 {
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale));
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--fg-dim);
@@ -792,7 +844,7 @@ body {
 
 .changelog p {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   line-height: 1.5;
 }
 
@@ -802,7 +854,7 @@ body {
 }
 
 .changelog li {
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   line-height: 1.5;
   margin-bottom: 4px;
 }
@@ -815,12 +867,13 @@ body {
 
 .close-confirm-dialog p {
   margin: 0 0 16px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale));
   line-height: 1.4;
 }
 
 .close-confirm-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }
@@ -831,7 +884,7 @@ body {
   color: var(--fg);
   padding: 5px 12px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale));
   font-family: var(--font-ui);
   cursor: pointer;
 }
@@ -851,6 +904,18 @@ body {
   filter: brightness(1.08);
 }
 
+/* ── Update available ───────────────────────────────────── */
+.update-dialog {
+  min-width: 380px;
+  max-width: 480px;
+}
+
+.update-dialog .changelog {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0 0 16px;
+}
+
 /* ── StatusBar ──────────────────────────────────────────── */
 .statusbar {
   display: flex;
@@ -859,7 +924,7 @@ body {
   padding: 3px 10px;
   background: var(--bg);
   border-top: 1px solid var(--border);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale));
   color: var(--fg-dim);
   flex: none;
 }
@@ -880,7 +945,7 @@ body {
   color: var(--fg);
   border: 1px solid #3b4048;
   border-radius: 3px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale));
   font-family: var(--font-ui);
   padding: 1px 18px 1px 6px;
   cursor: pointer;
@@ -906,7 +971,7 @@ body {
   right: 5px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 8px;
+  font-size: calc(8px * var(--ui-font-scale));
   color: var(--fg-dim);
   pointer-events: none;
 }
@@ -916,7 +981,7 @@ body {
   color: var(--fg-dim);
   border: 1px solid #3b4048;
   border-radius: 3px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale));
   font-family: var(--font-ui);
   padding: 1px 8px;
   cursor: pointer;
@@ -937,7 +1002,7 @@ body {
   color: var(--accent);
   border: 1px solid var(--accent);
   border-radius: 3px;
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale));
   padding: 1px 8px;
   cursor: default;
 }
@@ -971,10 +1036,10 @@ body {
   border: 2px dashed var(--accent);
   border-radius: 12px;
   color: var(--fg);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale));
   font-family: var(--font-ui);
 }
 
 .drag-overlay-icon {
-  font-size: 36px;
+  font-size: calc(36px * var(--ui-font-scale));
 }

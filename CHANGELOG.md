@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0] - 2026-08-28
+
+- Configurable interface text size, separate from the editor font.
+- Smarter find/replace: select-all on open, better Tab order.
+- Notifies you when a new version is available.
+- Optional "Open with LittlePad" file associations.
+- Settings window is now bigger, resizable, and remembers its size.
+
 ## [1.0.0] - 2026-08-01
 
 First stable release.

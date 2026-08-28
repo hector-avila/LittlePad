@@ -21,9 +21,9 @@ export default function FindReplaceDialog() {
     const selection = editorBridge.getSelection();
     if (selection) setSearchText(selection);
     setStatus('idle');
-    const raf = requestAnimationFrame(() => searchRef.current?.focus());
+    const raf = requestAnimationFrame(() => searchRef.current?.select());
     return () => cancelAnimationFrame(raf);
-  }, [open]);
+  }, [open, mode]);
 
   // Live preview (debounced): highlights every match and updates the count
   // as the query changes, before Enter/Find is even pressed.
@@ -80,6 +80,7 @@ export default function FindReplaceDialog() {
         <input
           ref={searchRef}
           type="text"
+          tabIndex={1}
           value={searchText}
           placeholder="Find…"
           onChange={(e) => setSearchText(e.target.value)}
@@ -94,6 +95,7 @@ export default function FindReplaceDialog() {
         />
         <button
           type="button"
+          tabIndex={5}
           className={`fr-icon-toggle${regexp ? ' active' : ''}`}
           aria-pressed={regexp}
           title="Regular expression"
@@ -103,6 +105,7 @@ export default function FindReplaceDialog() {
         </button>
         <button
           type="button"
+          tabIndex={6}
           className={`fr-icon-toggle${caseSensitive ? ' active' : ''}`}
           aria-pressed={caseSensitive}
           title="Case sensitive"
@@ -110,13 +113,13 @@ export default function FindReplaceDialog() {
         >
           Aa
         </button>
-        <button onClick={() => report(editorBridge.findPrevious(query))} title="Previous">
+        <button tabIndex={7} onClick={() => report(editorBridge.findPrevious(query))} title="Previous">
           ▲
         </button>
-        <button onClick={() => report(editorBridge.findNext(query))} title="Next">
+        <button tabIndex={8} onClick={() => report(editorBridge.findNext(query))} title="Next">
           ▼
         </button>
-        <button className="fr-close" onClick={close} title="Close (Esc)">
+        <button tabIndex={9} className="fr-close" onClick={close} title="Close (Esc)">
           ×
         </button>
       </div>
@@ -124,6 +127,7 @@ export default function FindReplaceDialog() {
         <div className="fr-row">
           <input
             type="text"
+            tabIndex={2}
             value={replaceText}
             placeholder="Replace with…"
             onChange={(e) => setReplaceText(e.target.value)}
@@ -136,8 +140,8 @@ export default function FindReplaceDialog() {
               }
             }}
           />
-          <button onClick={() => report(editorBridge.replaceNext(query))}>Replace</button>
-          <button onClick={() => report(editorBridge.replaceAll(query))}>Replace all</button>
+          <button tabIndex={3} onClick={() => report(editorBridge.replaceNext(query))}>Replace</button>
+          <button tabIndex={4} onClick={() => report(editorBridge.replaceAll(query))}>Replace all</button>
         </div>
       )}
       {(status === 'invalid' || matchCount !== null) && (

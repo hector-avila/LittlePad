@@ -114,8 +114,51 @@ export const MIN_FONT_SIZE = 8;
 export const MAX_FONT_SIZE = 32;
 const FONT_SIZE_STEP = 1;
 
+/**
+ * The built-in interface text size, in px. This scales the UI chrome
+ * (toolbar, menus, dialogs, status bar…) via `--ui-font-scale` — it's
+ * independent from the editor's own font size above.
+ */
+export const DEFAULT_UI_FONT_SIZE = 13;
+export const MIN_UI_FONT_SIZE = 10;
+export const MAX_UI_FONT_SIZE = 20;
+
 /** Fonts bundled in `public/fonts` (declared via @font-face in App.css). */
 export const BUNDLED_FONTS = ['Ubuntu Monospace', 'MesloLGS NF'] as const;
+
+/**
+ * The built-in Settings dialog size, in px — used to seed `settingsDialogSize`
+ * for new/legacy settings. Users with a larger `uiFontSize` typically need a
+ * bigger dialog too, hence it's resizable and remembered (see
+ * `setSettingsDialogSize`).
+ */
+export const DEFAULT_SETTINGS_DIALOG_WIDTH = 680;
+export const DEFAULT_SETTINGS_DIALOG_HEIGHT = 580;
+export const MIN_SETTINGS_DIALOG_WIDTH = 420;
+export const MIN_SETTINGS_DIALOG_HEIGHT = 360;
+
+/**
+ * Extensions LittlePad's language detection recognizes (see
+ * `services/detector.ts`'s `EXT_MAP`) — offered as checkboxes on the
+ * Settings screen's "File associations" section (Windows and Linux); the
+ * user can also type in any extension not listed here.
+ */
+export const KNOWN_FILE_EXTENSIONS = [
+  '.json', '.json5', '.jsonc', '.xml', '.xsd', '.xsl', '.svg', '.pom', '.yaml', '.yml',
+  '.toml', '.ini', '.cfg', '.conf', '.properties', '.log', '.js', '.mjs', '.cjs', '.jsx',
+  '.ts', '.tsx', '.java', '.py', '.md', '.markdown', '.mdx', '.txt',
+] as const;
+
+/**
+ * Normalizes user-typed extension input ("json", ".JSON", " .json ") into
+ * the `.ext` form the registry keys use, or null if it isn't a plausible
+ * extension at all.
+ */
+export function normalizeExtension(input: string): string | null {
+  const trimmed = input.trim().toLowerCase();
+  const withDot = trimmed.startsWith('.') ? trimmed : `.${trimmed}`;
+  return /^\.[a-z0-9]{1,31}$/.test(withDot) ? withDot : null;
+}
 
 export interface Settings {
   shortcuts: Shortcuts;
@@ -127,6 +170,18 @@ export interface Settings {
   fontFamily: string;
   /** Whether long lines wrap instead of scrolling horizontally. */
   wordWrap: boolean;
+  /** Interface text size, in px (toolbar, menus, dialogs, status bar…). */
+  uiFontSize: number;
+  /**
+   * File extensions (".ext" form) currently registered with Windows'
+   * "Open with" menu (see the Settings "File associations" section) —
+   * empty everywhere else. This list is the source of truth for what's
+   * actually registered, so it can be handed back to the Rust side to
+   * clean up on "Remove all" or uninstall.
+   */
+  associatedExtensions: string[];
+  /** Settings dialog size, in px — resizable by dragging its corner, remembered across launches. */
+  settingsDialogSize: { width: number; height: number };
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -135,6 +190,12 @@ const DEFAULT_SETTINGS: Settings = {
   fontSize: DEFAULT_FONT_SIZE,
   fontFamily: '',
   wordWrap: true,
+  uiFontSize: DEFAULT_UI_FONT_SIZE,
+  associatedExtensions: [],
+  settingsDialogSize: {
+    width: DEFAULT_SETTINGS_DIALOG_WIDTH,
+    height: DEFAULT_SETTINGS_DIALOG_HEIGHT,
+  },
 };
 
 // The only fixed, non-configurable shortcut left: Ctrl+Tab / Ctrl+Shift+Tab
@@ -174,6 +235,20 @@ function clampSize(size: number, min: number): number {
   return Math.min(MAX_FONT_SIZE, Math.max(min, size));
 }
 
+function clampUiFontSize(size: number): number {
+  return Math.min(MAX_UI_FONT_SIZE, Math.max(MIN_UI_FONT_SIZE, size));
+}
+
+function clampSettingsDialogSize(size: { width: number; height: number }): {
+  width: number;
+  height: number;
+} {
+  return {
+    width: Math.max(MIN_SETTINGS_DIALOG_WIDTH, Math.round(size.width)),
+    height: Math.max(MIN_SETTINGS_DIALOG_HEIGHT, Math.round(size.height)),
+  };
+}
+
 function load(): Settings {
   try {
     const raw = localStorage.getItem(LS_KEY);
@@ -192,6 +267,19 @@ function load(): Settings {
           : baseFontSize,
       fontFamily: parsed.fontFamily ?? DEFAULT_SETTINGS.fontFamily,
       wordWrap: typeof parsed.wordWrap === 'boolean' ? parsed.wordWrap : DEFAULT_SETTINGS.wordWrap,
+      uiFontSize:
+        typeof parsed.uiFontSize === 'number'
+          ? clampUiFontSize(parsed.uiFontSize)
+          : DEFAULT_SETTINGS.uiFontSize,
+      associatedExtensions: Array.isArray(parsed.associatedExtensions)
+        ? parsed.associatedExtensions.filter((e): e is string => typeof e === 'string')
+        : DEFAULT_SETTINGS.associatedExtensions,
+      settingsDialogSize:
+        parsed.settingsDialogSize &&
+        typeof parsed.settingsDialogSize.width === 'number' &&
+        typeof parsed.settingsDialogSize.height === 'number'
+          ? clampSettingsDialogSize(parsed.settingsDialogSize)
+          : DEFAULT_SETTINGS.settingsDialogSize,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -247,6 +335,25 @@ export function toggleWordWrap(): void {
   persist();
 }
 
+/** Sets the interface text size from Settings (toolbar, menus, dialogs…). */
+export function setUiFontSize(size: number): void {
+  settingsStore.set((s) => ({ ...s, uiFontSize: clampUiFontSize(Math.round(size)) }));
+  persist();
+}
+
+/**
+ * Records the Settings dialog's current size (dragged via its resize
+ * handle), so it reopens at the same size next time — useful since a
+ * larger `uiFontSize` usually calls for a bigger dialog too.
+ */
+export function setSettingsDialogSize(width: number, height: number): void {
+  settingsStore.set((s) => ({
+    ...s,
+    settingsDialogSize: clampSettingsDialogSize({ width, height }),
+  }));
+  persist();
+}
+
 /**
  * Sets the "normal" font size from Settings — the floor for Ctrl+Scroll
  * zoom. Also resets the current effective size to it (so the change is
@@ -257,6 +364,31 @@ export function setBaseFontSize(size: number): void {
     const baseFontSize = clampSize(Math.round(size), MIN_FONT_SIZE);
     return { ...s, baseFontSize, fontSize: baseFontSize };
   });
+  persist();
+}
+
+/** Records `ext` as registered (see backend.registerFileAssociation()). */
+export function addAssociatedExtension(ext: string): void {
+  settingsStore.set((s) =>
+    s.associatedExtensions.includes(ext)
+      ? s
+      : { ...s, associatedExtensions: [...s.associatedExtensions, ext] },
+  );
+  persist();
+}
+
+/** Records `ext` as no longer registered (see backend.unregisterFileAssociation()). */
+export function removeAssociatedExtension(ext: string): void {
+  settingsStore.set((s) => ({
+    ...s,
+    associatedExtensions: s.associatedExtensions.filter((e) => e !== ext),
+  }));
+  persist();
+}
+
+/** Clears the whole list (see backend.removeAllFileAssociations()). */
+export function clearAssociatedExtensions(): void {
+  settingsStore.set((s) => ({ ...s, associatedExtensions: [] }));
   persist();
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useStore } from '../store/createStore';
 import { settingsOpenStore, closeSettingsDialog, showBanner } from '../store/misc';
 import * as backend from '../services/backend';
@@ -10,14 +10,23 @@ import {
   setShortcut,
   setFontFamily,
   setBaseFontSize,
+  setUiFontSize,
+  setSettingsDialogSize,
   formatShortcut,
   isTaken,
   shortcutRequiresCtrl,
+  normalizeExtension,
+  addAssociatedExtension,
+  removeAssociatedExtension,
+  clearAssociatedExtensions,
   ACTION_ORDER,
   ACTION_LABELS,
   BUNDLED_FONTS,
+  KNOWN_FILE_EXTENSIONS,
   MIN_FONT_SIZE,
   MAX_FONT_SIZE,
+  MIN_UI_FONT_SIZE,
+  MAX_UI_FONT_SIZE,
   type ActionId,
   type Shortcut,
 } from '../store/settings';
@@ -29,26 +38,32 @@ const FONT_LICENSES: Record<(typeof BUNDLED_FONTS)[number], string> = {
   'MesloLGS NF': 'https://github.com/romkatv/dotfiles-public/tree/master/.local/share/fonts/NerdFonts',
 };
 
-async function openExternal(url: string): Promise<void> {
-  if (backend.isTauri) {
-    const { openUrl } = await import('@tauri-apps/plugin-opener');
-    await openUrl(url);
-  } else {
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }
-}
-
-type SectionId = 'shortcuts' | 'font' | 'data' | 'shortcut' | 'danger' | 'about';
+type SectionId =
+  | 'shortcuts'
+  | 'font'
+  | 'interface'
+  | 'data'
+  | 'shortcut'
+  | 'fileAssociations'
+  | 'danger'
+  | 'about';
 
 /** Left-nav sections; `tauriOnly` ones are hidden entirely in the browser dev build. */
 const SECTIONS: { id: SectionId; label: string; tauriOnly?: boolean }[] = [
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
   { id: 'font', label: 'Editor font' },
+  { id: 'interface', label: 'Interface' },
   { id: 'data', label: 'Data location' },
   { id: 'shortcut', label: 'Desktop shortcut & PATH', tauriOnly: true },
+  { id: 'fileAssociations', label: 'File associations', tauriOnly: true },
   { id: 'danger', label: 'Danger zone', tauriOnly: true },
   { id: 'about', label: 'About' },
 ];
+
+/** Whether this OS supports the interactive, per-extension "Open with" checklist. */
+function supportsFileAssociations(os: string | undefined): boolean {
+  return os === 'windows' || os === 'linux';
+}
 
 export default function SettingsDialog() {
   const { open } = useStore(settingsOpenStore);
@@ -57,12 +72,52 @@ export default function SettingsDialog() {
   const [error, setError] = useState<string | null>(null);
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
+  const [platform, setPlatform] = useState<{ os: string; arch: string } | null>(null);
   const [section, setSection] = useState<SectionId>('shortcuts');
+  const [extInput, setExtInput] = useState('');
+  const [extBusy, setExtBusy] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // True while (and for a beat after) the user drags the resize handle:
+  // releasing the pointer past the dialog's edge mid-drag registers as a
+  // click on the overlay behind it, which would otherwise close the dialog
+  // (see the overlay's onClick below).
+  const resizingRef = useRef(false);
+  const resizingTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     if (!open || !backend.isTauri) return;
     backend.getDataDir().then(setDataDir).catch(() => setDataDir(null));
     backend.listSystemFonts().then(setSystemFonts).catch(() => setSystemFonts([]));
+    backend.getPlatformInfo().then(setPlatform).catch(() => setPlatform(null));
+  }, [open]);
+
+  // Persists the dialog's size after the user drags its resize handle
+  // (debounced so dragging doesn't spam localStorage on every pixel).
+  useEffect(() => {
+    if (!open) return;
+    const el = dialogRef.current;
+    if (!el) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const observer = new ResizeObserver(() => {
+      resizingRef.current = true;
+      clearTimeout(resizingTimeoutRef.current);
+      resizingTimeoutRef.current = setTimeout(() => {
+        resizingRef.current = false;
+      }, 1000);
+
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (dialogRef.current) {
+          setSettingsDialogSize(dialogRef.current.offsetWidth, dialogRef.current.offsetHeight);
+        }
+      }, 300);
+    });
+    observer.observe(el);
+    return () => {
+      clearTimeout(resizingTimeoutRef.current);
+      clearTimeout(timer);
+      observer.disconnect();
+    };
   }, [open]);
 
   if (!open) return null;
@@ -89,6 +144,47 @@ export default function SettingsDialog() {
     }
   };
 
+  // Toggles one extension's Windows "Open with" registration. Also used to
+  // register a brand-new custom extension (it's simply not in
+  // `associatedExtensions` yet, so this takes the "register" branch).
+  const toggleExtension = async (ext: string) => {
+    const active = settings.associatedExtensions.includes(ext);
+    setExtBusy(ext);
+    try {
+      if (active) {
+        await backend.unregisterFileAssociation(ext);
+        removeAssociatedExtension(ext);
+      } else {
+        await backend.registerFileAssociation(ext);
+        addAssociatedExtension(ext);
+      }
+    } catch (e) {
+      showBanner(String(e), 'error');
+    } finally {
+      setExtBusy(null);
+    }
+  };
+
+  const addCustomExtension = () => {
+    const normalized = normalizeExtension(extInput);
+    if (!normalized) {
+      showBanner('Enter a valid extension, e.g. "rs" or ".rs"', 'error');
+      return;
+    }
+    setExtInput('');
+    if (!settings.associatedExtensions.includes(normalized)) void toggleExtension(normalized);
+  };
+
+  const removeAllAssociations = async () => {
+    try {
+      const message = await backend.removeAllFileAssociations(settings.associatedExtensions);
+      clearAssociatedExtensions();
+      showBanner(message);
+    } catch (e) {
+      showBanner(String(e), 'error');
+    }
+  };
+
   const uninstall = async () => {
     const { ask, message } = await import('@tauri-apps/plugin-dialog');
     const confirmed = await ask(
@@ -99,9 +195,11 @@ export default function SettingsDialog() {
     );
     if (!confirmed) return;
 
-    // Best-effort: a missing shortcut/PATH entry, or lack of permission to
-    // remove one, shouldn't block deleting the data itself.
+    // Best-effort: a missing shortcut/PATH entry (or, on non-Windows, the
+    // fact that file associations don't apply at all) shouldn't block
+    // deleting the data itself.
     await backend.removeShortcuts().catch(() => {});
+    await backend.removeAllFileAssociations(settings.associatedExtensions).catch(() => {});
 
     try {
       await backend.deleteAppData();
@@ -162,12 +260,28 @@ export default function SettingsDialog() {
 
   const visibleSections = SECTIONS.filter((s) => !s.tauriOnly || backend.isTauri);
 
+  // Extensions the user added that aren't in the built-in checklist, so
+  // they still show up (and stay checked/removable) once registered.
+  const customExtensions = settings.associatedExtensions.filter(
+    (e) => !(KNOWN_FILE_EXTENSIONS as readonly string[]).includes(e),
+  );
+
   return (
-    <div className="dialog-overlay" onClick={() => closeSettingsDialog()}>
+    <div
+      className="dialog-overlay"
+      onClick={() => {
+        if (!resizingRef.current) closeSettingsDialog();
+      }}
+    >
       <div
+        ref={dialogRef}
         className="settings-dialog settings-dialog-split"
         role="dialog"
         aria-label="Settings"
+        style={{
+          width: settings.settingsDialogSize.width,
+          height: settings.settingsDialogSize.height,
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="settings-header">
@@ -280,13 +394,37 @@ export default function SettingsDialog() {
                     <span key={name}>
                       {i > 0 && ' · '}
                       {name} (
-                      <button type="button" onClick={() => void openExternal(FONT_LICENSES[name])}>
+                      <button type="button" onClick={() => void backend.openExternal(FONT_LICENSES[name])}>
                         license
                       </button>
                       )
                     </span>
                   ))}
                 </p>
+              </>
+            )}
+
+            {section === 'interface' && (
+              <>
+                <h3 className="settings-subheading">Interface</h3>
+                <p className="settings-hint">
+                  Size of the interface text — toolbar, menus, dialogs, status bar…
+                  Doesn't affect the editor's own font size (see "Editor font").
+                </p>
+                <div className="settings-row">
+                  <span>Text size</span>
+                  <input
+                    type="number"
+                    className="settings-number-input"
+                    min={MIN_UI_FONT_SIZE}
+                    max={MAX_UI_FONT_SIZE}
+                    value={settings.uiFontSize}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      if (!Number.isNaN(n)) setUiFontSize(n);
+                    }}
+                  />
+                </div>
               </>
             )}
 
@@ -324,6 +462,69 @@ export default function SettingsDialog() {
               </>
             )}
 
+            {section === 'fileAssociations' && backend.isTauri && (
+              <>
+                <h3 className="settings-subheading">File associations</h3>
+                {platform === null && <p className="settings-hint">Loading…</p>}
+                {platform && supportsFileAssociations(platform.os) && (
+                  <>
+                    <p className="settings-hint">
+                      Check the file types you want LittlePad to appear under in your file
+                      manager's "Open with" menu. This alone doesn't change what opens when
+                      you double-click a file: to make LittlePad the default for a file type,
+                      right-click a file of that type, choose Open with → LittlePad, and set
+                      it as the default from there.
+                    </p>
+                    <div className="ext-grid">
+                      {[...KNOWN_FILE_EXTENSIONS, ...customExtensions].map((ext) => (
+                        <label className="ext-chip" key={ext}>
+                          <input
+                            type="checkbox"
+                            checked={settings.associatedExtensions.includes(ext)}
+                            disabled={extBusy === ext}
+                            onChange={() => void toggleExtension(ext)}
+                          />
+                          {ext}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="settings-row">
+                      <input
+                        type="text"
+                        className="settings-number-input ext-input"
+                        placeholder="Other extension…"
+                        value={extInput}
+                        onChange={(e) => setExtInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') addCustomExtension();
+                        }}
+                      />
+                      <button className="shortcut-btn" onClick={addCustomExtension}>
+                        Add
+                      </button>
+                    </div>
+                  </>
+                )}
+                {platform && platform.os === 'macos' && (
+                  <>
+                    <p className="settings-hint">
+                      LittlePad already appears under "Open with" in Finder for these file
+                      types — this is decided when the app is built, not something to pick per
+                      file here. To make LittlePad the default for one of them, right-click a
+                      file of that type, choose Open With → LittlePad, and click "Change All…".
+                    </p>
+                    <div className="ext-grid">
+                      {KNOWN_FILE_EXTENSIONS.map((ext) => (
+                        <span className="ext-chip ext-chip-static" key={ext}>
+                          {ext}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
             {section === 'danger' && backend.isTauri && (
               <>
                 <h3 className="settings-subheading settings-subheading-danger">Danger zone</h3>
@@ -335,6 +536,15 @@ export default function SettingsDialog() {
                   <button className="shortcut-btn danger-btn" onClick={() => void uninstall()}>
                     Uninstall LittlePad…
                   </button>
+                  {platform && supportsFileAssociations(platform.os) && (
+                    <button
+                      className="shortcut-btn danger-btn"
+                      disabled={settings.associatedExtensions.length === 0}
+                      onClick={() => void removeAllAssociations()}
+                    >
+                      Remove file associations…
+                    </button>
+                  )}
                 </div>
               </>
             )}

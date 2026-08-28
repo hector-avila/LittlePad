@@ -279,6 +279,336 @@ pub fn remove(app: &tauri::AppHandle) -> Result<String, String> {
         .into())
 }
 
+/// Rejects anything that isn't a plain `.ext` — this ends up inside a
+/// registry key path (Windows) or a mime-type/glob name (Linux), so a stray
+/// `\`/`..`/`/` in a user-typed extension must never be allowed through (see
+/// `session::validate_id` for the same defensive pattern elsewhere).
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn validate_extension(ext: &str) -> Result<(), String> {
+    let valid = ext.len() > 1
+        && ext.len() <= 32
+        && ext.starts_with('.')
+        && ext[1..].chars().all(|c| c.is_ascii_alphanumeric());
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("invalid file extension: {ext}"))
+    }
+}
+
+/// Registers LittlePad as an "Open with" candidate on Windows for one
+/// specific extension the user picked on the Settings screen — opt-in only,
+/// never called automatically, and safe to call repeatedly (fully
+/// idempotent). Two things happen, both per-user (`HKCU\Software\Classes`,
+/// no elevation needed) and both purely additive:
+///
+/// 1. `Applications\LittlePad.exe` — makes LittlePad selectable from
+///    Explorer's "Open with -> Choose another app" for *any* file. This
+///    alone does not change what opens when a file is double-clicked: it
+///    only adds LittlePad to the list of choices. Windows' own dialog is
+///    what offers "Always use this app for .xyz files" — checking that
+///    (the user's explicit, native-Windows confirmation) is what actually
+///    sets it as the default, which this function never does on its own.
+/// 2. `<ext>\OpenWithList\LittlePad.exe` — an empty marker key that gets
+///    LittlePad listed directly in the short "Open with" flyout for `ext`,
+///    instead of requiring "Choose another app" first.
+#[cfg(target_os = "windows")]
+pub fn register_file_association(_app: &tauri::AppHandle, ext: &str) -> Result<(), String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    validate_extension(ext)?;
+
+    let exe = exe_path()?;
+    let exe_str = exe.to_string_lossy().to_string();
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let classes = hkcu
+        .open_subkey_with_flags("Software\\Classes", KEY_ALL_ACCESS)
+        .map_err(|e| format!("could not open Software\\Classes: {e}"))?;
+
+    let (app_key, _) = classes
+        .create_subkey("Applications\\LittlePad.exe")
+        .map_err(|e| format!("could not register the Applications key: {e}"))?;
+    app_key
+        .set_value("FriendlyAppName", &"LittlePad")
+        .map_err(|e| e.to_string())?;
+
+    if let Some(icon) = install_win_icon() {
+        let (icon_key, _) = app_key
+            .create_subkey("DefaultIcon")
+            .map_err(|e| e.to_string())?;
+        icon_key
+            .set_value("", &format!("{},0", icon.to_string_lossy()))
+            .map_err(|e| e.to_string())?;
+    }
+
+    let (cmd_key, _) = app_key
+        .create_subkey("shell\\open\\command")
+        .map_err(|e| e.to_string())?;
+    cmd_key
+        .set_value("", &format!("\"{exe_str}\" \"%1\""))
+        .map_err(|e| e.to_string())?;
+
+    classes
+        .create_subkey(format!("{ext}\\OpenWithList\\LittlePad.exe"))
+        .map_err(|e| format!("could not register {ext}: {e}"))?;
+
+    Ok(())
+}
+
+/// Removes one extension's "Open with" flyout entry (see
+/// `register_file_association`). Leaves the broader
+/// `Applications\LittlePad.exe` registration alone — other extensions the
+/// user picked may still depend on it; `remove_all_file_associations` tears
+/// that down too. Best-effort — an already-absent key is not an error.
+#[cfg(target_os = "windows")]
+pub fn unregister_file_association(_app: &tauri::AppHandle, ext: &str) -> Result<(), String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    validate_extension(ext)?;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let classes = hkcu
+        .open_subkey_with_flags("Software\\Classes", KEY_ALL_ACCESS)
+        .map_err(|e| format!("could not open Software\\Classes: {e}"))?;
+    let _ = classes.delete_subkey(format!("{ext}\\OpenWithList\\LittlePad.exe"));
+    Ok(())
+}
+
+/// Removes every extension in `extensions` (the user's current picks) from
+/// the "Open with" flyout, plus the `Applications\LittlePad.exe`
+/// registration itself. Best-effort throughout — an already-absent key is
+/// not an error. Does not touch whatever default file-type association the
+/// user may have set via Windows' own "Always use this app" dialog; Windows
+/// falls back to the previous default (or asks again) on its own once
+/// LittlePad is no longer a registered application.
+#[cfg(target_os = "windows")]
+pub fn remove_all_file_associations(
+    _app: &tauri::AppHandle,
+    extensions: &[String],
+) -> Result<String, String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let classes = hkcu
+        .open_subkey_with_flags("Software\\Classes", KEY_ALL_ACCESS)
+        .map_err(|e| format!("could not open Software\\Classes: {e}"))?;
+
+    for ext in extensions {
+        if validate_extension(ext).is_ok() {
+            let _ = classes.delete_subkey(format!("{ext}\\OpenWithList\\LittlePad.exe"));
+        }
+    }
+    let _ = classes.delete_subkey_all("Applications\\LittlePad.exe");
+
+    Ok("LittlePad's \"Open with\" registration was removed.".into())
+}
+
+/// LittlePad's own mime type for `ext` (e.g. `.rs` -> `application/x-littlepad-rs`).
+/// Every extension gets one, uniformly — known or user-typed — instead of
+/// guessing whether some "standard" mime type for it happens to already be
+/// registered on this particular distro (inconsistent across
+/// distros/shared-mime-info versions; our own type is deterministic and
+/// entirely under our control to add/remove cleanly).
+#[cfg(target_os = "linux")]
+fn littlepad_mime_type(ext: &str) -> String {
+    format!("application/x-littlepad-{}", &ext[1..])
+}
+
+#[cfg(target_os = "linux")]
+fn desktop_file_path(home: &str) -> PathBuf {
+    xdg_data_home(home).join("applications").join("littlepad.desktop")
+}
+
+#[cfg(target_os = "linux")]
+fn mime_package_path(home: &str, ext: &str) -> PathBuf {
+    xdg_data_home(home)
+        .join("mime")
+        .join("packages")
+        .join(format!("littlepad-{}.xml", &ext[1..]))
+}
+
+/// Best-effort: refreshes the shared-mime-info glob cache so `ext` ->
+/// LittlePad's mime type (see `littlepad_mime_type`) is picked up without
+/// waiting for whatever else would eventually trigger it. Missing tooling
+/// (some minimal/headless setups lack it) is not an error — the mime
+/// package file itself was still written either way.
+#[cfg(target_os = "linux")]
+fn update_mime_database(home: &str) {
+    let _ = std::process::Command::new("update-mime-database")
+        .arg(xdg_data_home(home).join("mime"))
+        .output();
+}
+
+/// Best-effort: refreshes the desktop-file cache so file managers notice
+/// LittlePad's updated `MimeType=` line right away.
+#[cfg(target_os = "linux")]
+fn update_desktop_database(home: &str) {
+    let _ = std::process::Command::new("update-desktop-database")
+        .arg(xdg_data_home(home).join("applications"))
+        .output();
+}
+
+/// Adds (`present: true`) or removes (`false`) `mime` from a `.desktop`
+/// file's flat `MimeType=` line — creating or dropping the line as needed.
+/// `.desktop` files have no nested sections to worry about here, so this is
+/// a plain line-by-line rewrite; every other line is left untouched.
+#[cfg(target_os = "linux")]
+fn desktop_set_mime(content: &str, mime: &str, present: bool) -> String {
+    let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+    let idx = lines.iter().position(|l| l.starts_with("MimeType="));
+
+    let mut items: Vec<String> = match idx {
+        Some(i) => lines[i]["MimeType=".len()..]
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+        None => Vec::new(),
+    };
+
+    if present {
+        if !items.iter().any(|i| i == mime) {
+            items.push(mime.to_string());
+        }
+    } else {
+        items.retain(|i| i != mime);
+    }
+
+    match (idx, items.is_empty()) {
+        (Some(i), false) => lines[i] = format!("MimeType={};", items.join(";")),
+        (Some(i), true) => {
+            lines.remove(i);
+        }
+        (None, false) => lines.push(format!("MimeType={};", items.join(";"))),
+        (None, true) => {}
+    }
+
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+/// Registers LittlePad as an "Open with" candidate on Linux for one specific
+/// extension the user picked on the Settings screen — opt-in only, never
+/// called automatically, and safe to call repeatedly (fully idempotent).
+/// Per-user (`~/.local/share`), no root needed. Two things happen:
+///
+/// 1. A tiny shared-mime-info package teaching the system that `*ext`
+///    files are LittlePad's own mime type (see `littlepad_mime_type`).
+/// 2. LittlePad's `.desktop` entry (created here if the user hasn't already
+///    run "Recreate shortcut") declares that mime type, which is what
+///    actually makes file managers list it as an opener for `ext`.
+///
+/// This only makes LittlePad a *candidate* — Nautilus/Dolphin/etc.'s own
+/// "Open With" dialog is what offers "Set as default", which is the user's
+/// explicit, native confirmation that actually changes what double-clicking
+/// such a file does; this function never sets a default on its own.
+#[cfg(target_os = "linux")]
+pub fn register_file_association(_app: &tauri::AppHandle, ext: &str) -> Result<(), String> {
+    validate_extension(ext)?;
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    let mime = littlepad_mime_type(ext);
+
+    let pkg_path = mime_package_path(&home, ext);
+    if let Some(parent) = pkg_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">\n  <mime-type type=\"{mime}\">\n    <comment>LittlePad-associated {ext} file</comment>\n    <glob pattern=\"*{ext}\"/>\n  </mime-type>\n</mime-info>\n"
+    );
+    std::fs::write(&pkg_path, xml).map_err(|e| format!("could not write {}: {e}", pkg_path.display()))?;
+    update_mime_database(&home);
+
+    let exe = exe_path()?;
+    let entry_path = desktop_file_path(&home);
+    let base = std::fs::read_to_string(&entry_path).unwrap_or_else(|_| {
+        let icon_line = install_icon(&home)
+            .map(|p| format!("Icon={}\n", p.to_string_lossy()))
+            .unwrap_or_default();
+        format!(
+            "[Desktop Entry]\nType=Application\nName=LittlePad\nExec=\"{}\" %F\n{icon_line}Terminal=false\nCategories=Utility;TextEditor;\n",
+            exe.to_string_lossy()
+        )
+    });
+    if let Some(parent) = entry_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&entry_path, desktop_set_mime(&base, &mime, true))
+        .map_err(|e| format!("could not write {}: {e}", entry_path.display()))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&entry_path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            let _ = std::fs::set_permissions(&entry_path, perms);
+        }
+    }
+
+    update_desktop_database(&home);
+    Ok(())
+}
+
+/// Removes one extension's association (see `register_file_association`):
+/// drops it from LittlePad's `.desktop` `MimeType=` line and removes its
+/// mime-info package. Leaves the `.desktop` file itself in place — it may
+/// still be the app-menu entry created by "Recreate shortcut". Best-effort
+/// — an already-absent file/entry is not an error.
+#[cfg(target_os = "linux")]
+pub fn unregister_file_association(_app: &tauri::AppHandle, ext: &str) -> Result<(), String> {
+    validate_extension(ext)?;
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    let mime = littlepad_mime_type(ext);
+
+    let entry_path = desktop_file_path(&home);
+    if let Ok(existing) = std::fs::read_to_string(&entry_path) {
+        let _ = std::fs::write(&entry_path, desktop_set_mime(&existing, &mime, false));
+    }
+    let _ = std::fs::remove_file(mime_package_path(&home, ext));
+
+    update_mime_database(&home);
+    update_desktop_database(&home);
+    Ok(())
+}
+
+/// Removes every extension in `extensions` (the user's current picks). Does
+/// not touch whatever default the user may have set via their file
+/// manager's own "Open With" dialog — that's tracked separately by the
+/// desktop environment (`~/.config/mimeapps.list`'s `[Default
+/// Applications]`), and falls back on its own once LittlePad stops
+/// declaring the mime type.
+#[cfg(target_os = "linux")]
+pub fn remove_all_file_associations(
+    app: &tauri::AppHandle,
+    extensions: &[String],
+) -> Result<String, String> {
+    for ext in extensions {
+        let _ = unregister_file_association(app, ext);
+    }
+    Ok("LittlePad's file associations were removed.".into())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+pub fn register_file_association(_app: &tauri::AppHandle, _ext: &str) -> Result<(), String> {
+    Err("File associations are only configurable on Windows and Linux.".into())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+pub fn unregister_file_association(_app: &tauri::AppHandle, _ext: &str) -> Result<(), String> {
+    Err("File associations are only configurable on Windows and Linux.".into())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+pub fn remove_all_file_associations(
+    _app: &tauri::AppHandle,
+    _extensions: &[String],
+) -> Result<String, String> {
+    Err("File associations are only configurable on Windows and Linux.".into())
+}
+
 /// Embedded at compile time (see the `LITTLEPAD_ICON_HASH` trick in
 /// `build.rs` for why this always reflects the current `app-icon.svg`):
 /// written out to a stable path at setup time so the `.desktop` files can
