@@ -175,3 +175,40 @@ pub fn list_system_fonts() -> Vec<String> {
     families.dedup();
     families
 }
+
+/// Registers LittlePad as an "Open with" candidate for one file extension
+/// the user picked on the Settings screen. Windows and Linux only (see
+/// `onboarding::register_file_association`); opt-in, called once per
+/// checked extension — never called automatically.
+#[tauri::command]
+pub fn register_file_association(app: tauri::AppHandle, ext: String) -> Result<(), String> {
+    crate::onboarding::register_file_association(&app, &ext)
+}
+
+/// Undoes `register_file_association` for one extension.
+#[tauri::command]
+pub fn unregister_file_association(app: tauri::AppHandle, ext: String) -> Result<(), String> {
+    crate::onboarding::unregister_file_association(&app, &ext)
+}
+
+/// Removes every extension in `extensions` (the user's current picks) plus
+/// the underlying "Open with" registration itself. Used by the Settings
+/// "Remove all" action, and (best-effort) from Uninstall.
+#[tauri::command]
+pub fn remove_all_file_associations(
+    app: tauri::AppHandle,
+    extensions: Vec<String>,
+) -> Result<String, String> {
+    crate::onboarding::remove_all_file_associations(&app, &extensions)
+}
+
+/// OS name and CPU architecture of this compiled binary — e.g.
+/// `("macos", "aarch64")`. Used by the frontend's update checker to pick
+/// the matching release asset (see `services/updateCheck.ts`). Resolved
+/// natively (not at frontend build time) so cross-compiled builds — the
+/// macOS Intel/Apple Silicon matrix legs run on the same runner arch, see
+/// .github/workflows/release.yml — still report their real target.
+#[tauri::command]
+pub fn platform_info() -> (String, String) {
+    (std::env::consts::OS.into(), std::env::consts::ARCH.into())
+}

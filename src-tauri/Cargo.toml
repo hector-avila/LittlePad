@@ -1,6 +1,6 @@
 [package]
 name = "LittlePad"
-version = "1.0.0"
+version = "1.1.0"
 description = "Free desktop text editor for Windows, Linux, and macOS"
 authors = ["Héctor Ávila"]
 edition = "2024"

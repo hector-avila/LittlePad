@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useStore } from './store/createStore';
 import TabBar from './components/TabBar';
 import EditorHost from './components/EditorHost';
 import StatusBar from './components/StatusBar';
@@ -7,10 +8,13 @@ import SettingsDialog from './components/SettingsDialog';
 import CloseConfirmDialog from './components/CloseConfirmDialog';
 import OnboardingDialog from './components/OnboardingDialog';
 import ExternalChangeDialog from './components/ExternalChangeDialog';
+import UpdateDialog from './components/UpdateDialog';
 import * as backend from './services/backend';
 import * as session from './services/session';
 import { editorBridge } from './services/editorBridge';
 import { seedFileMtime, checkForExternalChanges } from './services/externalChanges';
+import { checkForUpdate } from './services/updateCheck';
+import { showUpdate } from './store/update';
 import {
   showBanner,
   toggleFind,
@@ -24,7 +28,14 @@ import {
   toggleMenu,
   openOnboarding,
 } from './store/misc';
-import { settingsStore, matchesShortcut, zoomIn, zoomOut, resetFontSize } from './store/settings';
+import {
+  settingsStore,
+  matchesShortcut,
+  zoomIn,
+  zoomOut,
+  resetFontSize,
+  DEFAULT_UI_FONT_SIZE,
+} from './store/settings';
 import { tabsStore, addTab, activeTab, sessionIndex } from './store/tabs';
 import {
   newTab,
@@ -43,6 +54,10 @@ import './App.css';
 export default function App() {
   const loadedRef = useRef(false);
   const [dragActive, setDragActive] = useState(false);
+  const { uiFontSize } = useStore(settingsStore);
+  const appStyle = {
+    '--ui-font-scale': uiFontSize / DEFAULT_UI_FONT_SIZE,
+  } as CSSProperties;
 
   // Restore the session on startup
   useEffect(() => {
@@ -99,6 +114,10 @@ export default function App() {
       } catch {
         /* couldn't determine first-run status: don't bother the user */
       }
+
+      // Best-effort check for a newer published release (see services/updateCheck.ts).
+      const update = await checkForUpdate();
+      if (update) showUpdate(update);
     })();
   }, []);
 
@@ -441,7 +460,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="app">
+    <div className="app" style={appStyle}>
       <TabBar
         onNewTab={newTab}
         onCloseTab={closeTabAction}
@@ -454,6 +473,7 @@ export default function App() {
       <CloseConfirmDialog />
       <OnboardingDialog />
       <ExternalChangeDialog />
+      <UpdateDialog />
       {dragActive && (
         <div className="drag-overlay">
           <div className="drag-overlay-message">

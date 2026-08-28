@@ -120,6 +120,29 @@ export async function removeShortcuts(): Promise<string> {
 }
 
 /**
+ * Registers LittlePad as an "Open with" candidate in Windows Explorer for
+ * one file extension the user picked on the Settings screen. Opt-in,
+ * per-extension — Windows only (rejects on other platforms/outside Tauri,
+ * same as the Rust command it calls).
+ */
+export async function registerFileAssociation(ext: string): Promise<void> {
+  if (!isTauri) throw new Error('Only available in the desktop app');
+  return invoke('register_file_association', { ext });
+}
+
+/** Undoes registerFileAssociation() for one extension. */
+export async function unregisterFileAssociation(ext: string): Promise<void> {
+  if (!isTauri) throw new Error('Only available in the desktop app');
+  return invoke('unregister_file_association', { ext });
+}
+
+/** Removes every extension in `extensions`, plus the "Open with" registration itself. */
+export async function removeAllFileAssociations(extensions: string[]): Promise<string> {
+  if (!isTauri) throw new Error('Only available in the desktop app');
+  return invoke('remove_all_file_associations', { extensions });
+}
+
+/**
  * Deletes all app data on disk: every tab's autosaved content, the
  * first-run marker, and the data-location override. Irreversible.
  */
@@ -132,6 +155,27 @@ export async function deleteAppData(): Promise<void> {
 export async function listSystemFonts(): Promise<string[]> {
   if (!isTauri) return [];
   return invoke('list_system_fonts');
+}
+
+/**
+ * OS name ('windows'/'linux'/'macos'/…) and CPU architecture
+ * ('x86_64'/'aarch64'/…) of this build — used by the update checker to
+ * pick the matching release asset. Null outside Tauri.
+ */
+export async function getPlatformInfo(): Promise<{ os: string; arch: string } | null> {
+  if (!isTauri) return null;
+  const [os, arch] = await invoke<[string, string]>('platform_info');
+  return { os, arch };
+}
+
+/** Opens a URL in the system's default browser (a new tab outside Tauri). */
+export async function openExternal(url: string): Promise<void> {
+  if (isTauri) {
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(url);
+  } else {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
 }
 
 /** Window position/size (last non-maximized bounds) plus maximized state. */

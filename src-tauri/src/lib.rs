@@ -83,6 +83,10 @@ pub fn run() {
             commands::delete_app_data,
             commands::save_window_state,
             commands::list_system_fonts,
+            commands::platform_info,
+            commands::register_file_association,
+            commands::unregister_file_association,
+            commands::remove_all_file_associations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

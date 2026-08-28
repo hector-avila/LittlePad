@@ -65,6 +65,27 @@ jobs:
       - name: Generate icons from app-icon.svg
         run: npm run tauri icon app-icon.svg
 
+      # Pulls this version's bullet list straight out of CHANGELOG.md, so the
+      # release notes (and the in-app "update available" dialog, which reads
+      # them back from the published release — see services/updateCheck.ts)
+      # don't depend on hand-editing the draft before publishing. Falls back
+      # to a generic line if the tag's version has no matching entry yet
+      # (e.g. a workflow_dispatch run off a branch, not a tag).
+      - name: Extract changelog for this release
+        id: changelog
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES="$(node scripts/extract-changelog.mjs "$VERSION" 2>/dev/null || true)"
+          if [ -z "$NOTES" ]; then
+            NOTES="Generated automatically — see CHANGELOG.md."
+          fi
+          {
+            echo "notes<<CHANGELOG_EOF"
+            echo "$NOTES"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:
@@ -72,9 +93,11 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'LittlePad ${{ github.ref_name }}'
-          releaseBody: >-
+          releaseBody: |-
             Plain executables for Windows/Linux, and a LittlePad.app bundle
             (no installer/.dmg) for macOS — generated automatically.
+
+            ${{ steps.changelog.outputs.notes }}
           releaseDraft: true
           # true (plain binary, requires --no-bundle) for Windows/Linux;
           # false (upload the .app bundle tauri-action itself zips up,
