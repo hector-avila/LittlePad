@@ -356,7 +356,10 @@ The full development plan is in `../PLAN.md` (workspace root).
   `.dmg`) builds *only* the `.app` — still no installer, still nothing gets
   "installed" anywhere, it's just a folder Finder can launch directly.
   `build-macos.sh` copies `LittlePad.app` from
-  `src-tauri/target/[universal-apple-darwin/]release/bundle/macos/` into
+  `target/[universal-apple-darwin/]release/bundle/macos/` (note: `target/`,
+  not `src-tauri/target/` — src-tauri became a Cargo workspace member when
+  `relay-server/` was added, and Cargo builds every member into one shared
+  target dir at the workspace root) into
   `out/`, and also zips it with `ditto` (not plain `zip`, which can corrupt
   a `.app`'s resource forks/metadata) as `out/LittlePad-macos.app.zip` for
   easier distribution. CI mirrors this: macOS matrix entries use
@@ -510,7 +513,9 @@ one while you're at it (new, no smoke test case yet).
   volumes for caching: `littlepad-cargo`, `littlepad-target-linux`.
 - Tab IDs: UUIDs generated on the frontend (`crypto.randomUUID()`); Rust
   validates them (`validate_id`) against path traversal.
-- App identifier: `com.littlepad.app` (previously `com.node.formatpad`).
+- App identifier: `com.littlepad.desktop` (previously `com.littlepad.app`,
+  changed because Tauri warns that an identifier ending in `.app` conflicts
+  with the macOS bundle extension; before that, `com.node.formatpad`).
   Unlike before, **changing it no longer breaks existing sessions**: since
   `data_root` now defaults to `$HOME/.littlepad` (fixed) instead of
   `app_data_dir()` (which did depend on the identifier), the data location
@@ -875,7 +880,9 @@ one while you're at it (new, no smoke test case yet).
   changed — and only then, so it doesn't force a full rebuild on every
   single build the way `cargo clean` did. This works uniformly across
   `tauri dev`/`tauri build`, debug/release, and CI (where `rust-cache`
-  persists `src-tauri/target` **across separate release runs** — this fix
+  persists `target` at the workspace root — `src-tauri/target` before
+  `relay-server/` made src-tauri a workspace member — **across separate
+  release runs** — this fix
   still applies there since it's keyed off the icon bytes, not the profile
   or command). Nothing in any build script needs to know about this.
 - Ctrl+D (duplicate selection/line) **used to be** fixed, not

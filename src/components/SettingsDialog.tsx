@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useStore } from '../store/createStore';
 import { settingsOpenStore, closeSettingsDialog, showBanner } from '../store/misc';
+import { shareStore, openJoinShareDialog } from '../store/share';
+import * as shareClient from '../services/shareClient';
 import * as backend from '../services/backend';
 import Changelog from './Changelog';
+import PasswordInput from './PasswordInput';
 import changelogSource from '../../CHANGELOG.md?raw';
 import { version as appVersion } from '../../package.json';
 import {
@@ -12,9 +15,12 @@ import {
   setBaseFontSize,
   setUiFontSize,
   setSettingsDialogSize,
+  setShareServerUrl,
+  parseShareServerUrl,
+  setShareApiKey,
   formatShortcut,
   isTaken,
-  shortcutRequiresCtrl,
+  shortcutModifierRequirement,
   normalizeExtension,
   addAssociatedExtension,
   removeAssociatedExtension,
@@ -38,25 +44,23 @@ const FONT_LICENSES: Record<(typeof BUNDLED_FONTS)[number], string> = {
   'MesloLGS NF': 'https://github.com/romkatv/dotfiles-public/tree/master/.local/share/fonts/NerdFonts',
 };
 
-type SectionId =
-  | 'shortcuts'
-  | 'font'
-  | 'interface'
-  | 'data'
-  | 'shortcut'
-  | 'fileAssociations'
-  | 'danger'
-  | 'about';
+/** Share files feature guide — see Settings → Share. */
+const SERVER_MD_URL = 'https://github.com/hector-avila/LittlePad/blob/main/SERVER.md';
 
-/** Left-nav sections; `tauriOnly` ones are hidden entirely in the browser dev build. */
+type SectionId = 'share' | 'shortcuts' | 'interface' | 'system' | 'about';
+
+/**
+ * Left-nav sections; `tauriOnly` ones are hidden entirely in the browser
+ * dev build. 'system' groups Data location, Desktop shortcut & PATH, File
+ * associations, and Danger zone into one section (each still its own
+ * subheading in the content pane below); 'interface' also covers what used
+ * to be the separate Editor font section.
+ */
 const SECTIONS: { id: SectionId; label: string; tauriOnly?: boolean }[] = [
+  { id: 'share', label: 'Share', tauriOnly: true },
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
-  { id: 'font', label: 'Editor font' },
   { id: 'interface', label: 'Interface' },
-  { id: 'data', label: 'Data location' },
-  { id: 'shortcut', label: 'Desktop shortcut & PATH', tauriOnly: true },
-  { id: 'fileAssociations', label: 'File associations', tauriOnly: true },
-  { id: 'danger', label: 'Danger zone', tauriOnly: true },
+  { id: 'system', label: 'System' },
   { id: 'about', label: 'About' },
 ];
 
@@ -68,12 +72,18 @@ function supportsFileAssociations(os: string | undefined): boolean {
 export default function SettingsDialog() {
   const { open } = useStore(settingsOpenStore);
   const settings = useStore(settingsStore);
+  const share = useStore(shareStore);
   const [recording, setRecording] = useState<ActionId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
   const [platform, setPlatform] = useState<{ os: string; arch: string } | null>(null);
-  const [section, setSection] = useState<SectionId>('shortcuts');
+  // Defaults to 'share' the first time Settings is opened; after that this
+  // just remembers whatever was last selected, same as any React state —
+  // deliberately not persisted to Settings/localStorage, so it resets back
+  // to 'share' every time the app itself restarts (SettingsDialog stays
+  // mounted for the app's whole lifetime, it's just hidden while closed).
+  const [section, setSection] = useState<SectionId>('share');
   const [extInput, setExtInput] = useState('');
   const [extBusy, setExtBusy] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -228,15 +238,16 @@ export default function SettingsDialog() {
     if (IGNORED_KEYS.has(e.key)) return;
 
     const mod = e.ctrlKey || e.metaKey;
-    if (shortcutRequiresCtrl(id)) {
-      if (!mod) {
-        setError('The shortcut must include Ctrl');
-        return;
-      }
-    } else if (!mod && !e.altKey) {
+    const requirement = shortcutModifierRequirement(id);
+    if (requirement === 'ctrl' && !mod) {
+      setError('The shortcut must include Ctrl');
+      return;
+    }
+    if (requirement === 'ctrlOrAlt' && !mod && !e.altKey) {
       setError('The shortcut must include Ctrl or Alt');
       return;
     }
+    // requirement === 'none': any combination is fine, including a bare key like F3.
     const shortcut: Shortcut = {
       key: e.key.toLowerCase(),
       ctrl: mod,
@@ -259,6 +270,7 @@ export default function SettingsDialog() {
   };
 
   const visibleSections = SECTIONS.filter((s) => !s.tauriOnly || backend.isTauri);
+  const urlError = parseShareServerUrl(settings.shareServerUrl).error;
 
   // Extensions the user added that aren't in the built-in checklist, so
   // they still show up (and stay checked/removable) once registered.
@@ -309,7 +321,8 @@ export default function SettingsDialog() {
               <>
                 <h3 className="settings-subheading">Keyboard shortcuts</h3>
                 <p className="settings-hint">
-                  Hold Ctrl (or Alt, for column edit mode) and press a key to reassign
+                  Hold Ctrl (or Alt, for column edit mode) and press a key to reassign — "Find
+                  next" is the one exception, it takes a bare key like F3 with no modifier
                 </p>
                 {ACTION_ORDER.map((id) => (
                   <div className="settings-row" key={id}>
@@ -340,8 +353,28 @@ export default function SettingsDialog() {
               </>
             )}
 
-            {section === 'font' && (
+            {section === 'interface' && (
               <>
+                <h3 className="settings-subheading">Interface</h3>
+                <p className="settings-hint">
+                  Size of the interface text — toolbar, menus, dialogs, status bar…
+                  Doesn't affect the editor's own font size (see "Editor font" below).
+                </p>
+                <div className="settings-row">
+                  <span>Text size</span>
+                  <input
+                    type="number"
+                    className="settings-number-input"
+                    min={MIN_UI_FONT_SIZE}
+                    max={MAX_UI_FONT_SIZE}
+                    value={settings.uiFontSize}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      if (!Number.isNaN(n)) setUiFontSize(n);
+                    }}
+                  />
+                </div>
+
                 <h3 className="settings-subheading">Editor font</h3>
                 <p className="settings-hint">
                   Ctrl+Scroll wheel (or Ctrl+Plus/Minus) zooms the text size in/out — never
@@ -404,31 +437,86 @@ export default function SettingsDialog() {
               </>
             )}
 
-            {section === 'interface' && (
+            {section === 'share' && backend.isTauri && (
               <>
-                <h3 className="settings-subheading">Interface</h3>
+                <h3 className="settings-subheading">Share</h3>
                 <p className="settings-hint">
-                  Size of the interface text — toolbar, menus, dialogs, status bar…
-                  Doesn't affect the editor's own font size (see "Editor font").
+                  Real-time file sharing between LittlePad instances, relayed through a
+                  server you run yourself.{' '}
+                  <button type="button" onClick={() => void backend.openExternal(SERVER_MD_URL)}>
+                    Full guide (SERVER.md)
+                  </button>
                 </p>
-                <div className="settings-row">
-                  <span>Text size</span>
+                <div className="settings-row settings-row-column">
+                  <span>Server URL</span>
                   <input
-                    type="number"
-                    className="settings-number-input"
-                    min={MIN_UI_FONT_SIZE}
-                    max={MAX_UI_FONT_SIZE}
-                    value={settings.uiFontSize}
-                    onChange={(e) => {
-                      const n = parseInt(e.target.value, 10);
-                      if (!Number.isNaN(n)) setUiFontSize(n);
-                    }}
+                    type="text"
+                    className="settings-number-input settings-wide-input"
+                    placeholder="wss://my.domain/share or ws://192.168.1.10:7878"
+                    value={settings.shareServerUrl}
+                    onChange={(e) => setShareServerUrl(e.target.value)}
+                  />
+                  {urlError && <div className="settings-error">{urlError}</div>}
+                </div>
+                <p className="settings-hint">
+                  Any path is kept as typed (e.g. <code>my.domain/share</code>), so several
+                  services can share one domain instead of needing a dedicated subdomain.
+                  A missing scheme defaults to secure (wss); use <code>ws://</code>/
+                  <code>http://</code> explicitly for a plain, unencrypted connection.
+                </p>
+                <div className="settings-row settings-row-column">
+                  <span>API key</span>
+                  <PasswordInput
+                    wide
+                    className="settings-number-input settings-wide-input"
+                    placeholder="Shared secret — same on every instance"
+                    value={settings.shareApiKey}
+                    onChange={(e) => setShareApiKey(e.target.value)}
                   />
                 </div>
+                <p className={`share-status share-status-${share.status}`}>
+                  {share.status === 'connected' && '● Connected'}
+                  {share.status === 'connecting' && '○ Connecting…'}
+                  {share.status === 'disconnected' && '○ Not connected'}
+                  {share.status === 'error' && `⚠ ${share.error ?? 'Connection error'}`}
+                </p>
+
+                <h3 className="settings-subheading">Currently shared files</h3>
+                {share.shares.length === 0 ? (
+                  <p className="settings-hint">No files are currently shared on this server.</p>
+                ) : (
+                  <div className="settings-row-column">
+                    {share.shares.map((entry) => (
+                      <div className="settings-row share-list-row" key={entry.shareId}>
+                        <span>
+                          {entry.filename}
+                          {entry.readOnly ? ' (read-only)' : ''}
+                          {entry.mine ? ' — mine' : ''}
+                          <span className="share-connected-count" title="Instances currently connected">
+                            {' '}
+                            👤 {entry.connected}
+                          </span>
+                        </span>
+                        {entry.mine ? (
+                          <button
+                            className="shortcut-btn danger-btn"
+                            onClick={() => shareClient.unshareByShareId(entry.shareId)}
+                          >
+                            Stop sharing
+                          </button>
+                        ) : (
+                          <button className="shortcut-btn" onClick={() => openJoinShareDialog(entry)}>
+                            Open…
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
 
-            {section === 'data' && (
+            {section === 'system' && (
               <>
                 <h3 className="settings-subheading">Data location</h3>
                 <p className="settings-hint">Where the session and autosave data is stored</p>
@@ -444,108 +532,109 @@ export default function SettingsDialog() {
                 ) : (
                   <div className="settings-path">Only available in the desktop app</div>
                 )}
-              </>
-            )}
 
-            {section === 'shortcut' && backend.isTauri && (
-              <>
-                <h3 className="settings-subheading">Desktop shortcut &amp; PATH</h3>
-                <p className="settings-hint">
-                  Recreate the shortcut and PATH entry (e.g. after updating LittlePad, if the
-                  shortcut's icon looks outdated or missing).
-                </p>
-                <div className="settings-row settings-row-column">
-                  <button className="shortcut-btn" onClick={() => void recreateShortcuts()}>
-                    Recreate shortcut…
-                  </button>
-                </div>
-              </>
-            )}
-
-            {section === 'fileAssociations' && backend.isTauri && (
-              <>
-                <h3 className="settings-subheading">File associations</h3>
-                {platform === null && <p className="settings-hint">Loading…</p>}
-                {platform && supportsFileAssociations(platform.os) && (
+                {backend.isTauri && (
                   <>
+                    <h3 className="settings-subheading">Desktop shortcut &amp; PATH</h3>
                     <p className="settings-hint">
-                      Check the file types you want LittlePad to appear under in your file
-                      manager's "Open with" menu. This alone doesn't change what opens when
-                      you double-click a file: to make LittlePad the default for a file type,
-                      right-click a file of that type, choose Open with → LittlePad, and set
-                      it as the default from there.
+                      Recreate the shortcut and PATH entry (e.g. after updating LittlePad, if
+                      the shortcut's icon looks outdated or missing).
                     </p>
-                    <div className="ext-grid">
-                      {[...KNOWN_FILE_EXTENSIONS, ...customExtensions].map((ext) => (
-                        <label className="ext-chip" key={ext}>
-                          <input
-                            type="checkbox"
-                            checked={settings.associatedExtensions.includes(ext)}
-                            disabled={extBusy === ext}
-                            onChange={() => void toggleExtension(ext)}
-                          />
-                          {ext}
-                        </label>
-                      ))}
-                    </div>
-                    <div className="settings-row">
-                      <input
-                        type="text"
-                        className="settings-number-input ext-input"
-                        placeholder="Other extension…"
-                        value={extInput}
-                        onChange={(e) => setExtInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') addCustomExtension();
-                        }}
-                      />
-                      <button className="shortcut-btn" onClick={addCustomExtension}>
-                        Add
+                    <div className="settings-row settings-row-column">
+                      <button className="shortcut-btn" onClick={() => void recreateShortcuts()}>
+                        Recreate shortcut…
                       </button>
                     </div>
                   </>
                 )}
-                {platform && platform.os === 'macos' && (
+
+                {backend.isTauri && (
                   <>
+                    <h3 className="settings-subheading">File associations</h3>
+                    {platform === null && <p className="settings-hint">Loading…</p>}
+                    {platform && supportsFileAssociations(platform.os) && (
+                      <>
+                        <p className="settings-hint">
+                          Check the file types you want LittlePad to appear under in your file
+                          manager's "Open with" menu. This alone doesn't change what opens when
+                          you double-click a file: to make LittlePad the default for a file
+                          type, right-click a file of that type, choose Open with → LittlePad,
+                          and set it as the default from there.
+                        </p>
+                        <div className="ext-grid">
+                          {[...KNOWN_FILE_EXTENSIONS, ...customExtensions].map((ext) => (
+                            <label className="ext-chip" key={ext}>
+                              <input
+                                type="checkbox"
+                                checked={settings.associatedExtensions.includes(ext)}
+                                disabled={extBusy === ext}
+                                onChange={() => void toggleExtension(ext)}
+                              />
+                              {ext}
+                            </label>
+                          ))}
+                        </div>
+                        <div className="settings-row">
+                          <input
+                            type="text"
+                            className="settings-number-input ext-input"
+                            placeholder="Other extension…"
+                            value={extInput}
+                            onChange={(e) => setExtInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') addCustomExtension();
+                            }}
+                          />
+                          <button className="shortcut-btn" onClick={addCustomExtension}>
+                            Add
+                          </button>
+                        </div>
+                      </>
+                    )}
+                    {platform && platform.os === 'macos' && (
+                      <>
+                        <p className="settings-hint">
+                          LittlePad already appears under "Open with" in Finder for these file
+                          types — this is decided when the app is built, not something to pick
+                          per file here. To make LittlePad the default for one of them,
+                          right-click a file of that type, choose Open With → LittlePad, and
+                          click "Change All…".
+                        </p>
+                        <div className="ext-grid">
+                          {KNOWN_FILE_EXTENSIONS.map((ext) => (
+                            <span className="ext-chip ext-chip-static" key={ext}>
+                              {ext}
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {backend.isTauri && (
+                  <>
+                    <h3 className="settings-subheading settings-subheading-danger">Danger zone</h3>
                     <p className="settings-hint">
-                      LittlePad already appears under "Open with" in Finder for these file
-                      types — this is decided when the app is built, not something to pick per
-                      file here. To make LittlePad the default for one of them, right-click a
-                      file of that type, choose Open With → LittlePad, and click "Change All…".
+                      Removes the desktop shortcut and PATH entry, and permanently deletes
+                      every tab and autosaved file. Use this to fully uninstall LittlePad.
                     </p>
-                    <div className="ext-grid">
-                      {KNOWN_FILE_EXTENSIONS.map((ext) => (
-                        <span className="ext-chip ext-chip-static" key={ext}>
-                          {ext}
-                        </span>
-                      ))}
+                    <div className="settings-row settings-row-column">
+                      <button className="shortcut-btn danger-btn" onClick={() => void uninstall()}>
+                        Uninstall LittlePad…
+                      </button>
+                      {platform && supportsFileAssociations(platform.os) && (
+                        <button
+                          className="shortcut-btn danger-btn"
+                          disabled={settings.associatedExtensions.length === 0}
+                          onClick={() => void removeAllAssociations()}
+                        >
+                          Remove file associations…
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
-              </>
-            )}
-
-            {section === 'danger' && backend.isTauri && (
-              <>
-                <h3 className="settings-subheading settings-subheading-danger">Danger zone</h3>
-                <p className="settings-hint">
-                  Removes the desktop shortcut and PATH entry, and permanently deletes every
-                  tab and autosaved file. Use this to fully uninstall LittlePad.
-                </p>
-                <div className="settings-row settings-row-column">
-                  <button className="shortcut-btn danger-btn" onClick={() => void uninstall()}>
-                    Uninstall LittlePad…
-                  </button>
-                  {platform && supportsFileAssociations(platform.os) && (
-                    <button
-                      className="shortcut-btn danger-btn"
-                      disabled={settings.associatedExtensions.length === 0}
-                      onClick={() => void removeAllAssociations()}
-                    >
-                      Remove file associations…
-                    </button>
-                  )}
-                </div>
               </>
             )}
 

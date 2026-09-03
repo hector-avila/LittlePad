@@ -9,6 +9,8 @@ import { detect, detectByPath } from './services/detector';
 import { formatText } from './services/formatter';
 import { editorBridge } from './services/editorBridge';
 import { seedFileMtime, forgetFileMtime } from './services/externalChanges';
+import * as shareClient from './services/shareClient';
+import { shareDialogStore, closeShareDialog, dismissShareReconnect } from './store/share';
 import { showBanner, askCloseConfirm, pushClosedFile, popClosedFile } from './store/misc';
 import {
   tabsStore,
@@ -16,6 +18,7 @@ import {
   removeTab,
   updateTab,
   activeTab,
+  isLockedForMe,
 } from './store/tabs';
 import type { DetectedType, Tab } from './types';
 
@@ -146,6 +149,15 @@ export function extFor(lang: DetectedType): string {
 /** Closes a tab for good (without asking anything else). */
 export function finishCloseTab(tab: Tab): void {
   if (tab.filePath) pushClosedFile(tab.filePath);
+  shareClient.onTabClosed(tab.id);
+  // Safe no-op if it was never queued: a tab restored from a previous
+  // session that was part of a joined share, closed before its reconnect
+  // prompt was ever answered, must not leave the queue stuck.
+  dismissShareReconnect(tab.id);
+  // And if ShareDialog is currently showing this very tab (create or
+  // reconnect), close it too — otherwise it'd keep pointing at a now-gone
+  // tab, blocking the rest of the reconnect queue from ever being shown.
+  if (shareDialogStore.get().tabId === tab.id) closeShareDialog();
   removeTab(tab.id);
   forgetFileMtime(tab.id);
   void session.deleteTab(tab.id);
@@ -174,6 +186,7 @@ export function closeTabAction(id: string): void {
 export function formatAction(): void {
   const tab = activeTab();
   if (!tab) return;
+  if (isLockedForMe(tab)) return; // read-only share: viewing/copying only
   const content = editorBridge.getContent(tab.id) ?? '';
   const result = formatText(content, tab.language);
   if (result.ok) {

@@ -18,6 +18,37 @@ export function getTab(id: string): Tab | undefined {
   return tabsStore.get().tabs.find((t) => t.id === id);
 }
 
+/**
+ * True if `tab` is a share this instance can only view, not edit (see
+ * services/shareClient.ts). Every local-edit path — typing, paste, format,
+ * duplicate line, etc. — must check this before dispatching a change;
+ * broadcastLocalEdit() alone isn't enough, since it only stops the edit
+ * from reaching other participants, not from happening locally.
+ */
+export function isLockedForMe(tab: Tab | undefined): boolean {
+  return !!tab?.isShared && !!tab?.shareReadOnly && tab.shareRole !== 'owner';
+}
+
+/**
+ * True if this instance may change `tab`'s shared word-wrap/language (see
+ * services/shareClient.ts's `setShareWordWrap`/`setShareLanguage`) — only
+ * the owner decides those for a share, regardless of edit permission.
+ * Always true for a tab that isn't shared at all.
+ */
+export function canControlShareProperties(tab: Tab | undefined): boolean {
+  return !tab?.isShared || tab.shareRole === 'owner';
+}
+
+/**
+ * The word-wrap value that actually applies to `tab`: the global Settings
+ * value, unless it's shared and its owner set a per-share override (synced
+ * in real time — see shareClient.ts's Properties message). `undefined`
+ * `shareWordWrap` means "use the global value", same as an unshared tab.
+ */
+export function effectiveWordWrap(tab: Tab | undefined, globalWordWrap: boolean): boolean {
+  return tab?.isShared ? (tab.shareWordWrap ?? globalWordWrap) : globalWordWrap;
+}
+
 export function activeTab(): Tab | undefined {
   const { tabs, activeId } = tabsStore.get();
   return tabs.find((t) => t.id === activeId);
@@ -45,6 +76,17 @@ export function addTab(partial: Partial<Tab>, content = ''): Tab {
     dirty: partial.dirty ?? false,
     encoding: partial.encoding ?? 'utf-8',
     cursor: partial.cursor ?? 0,
+    // Real-time sharing (see services/shareClient.ts) — without these, a
+    // tab opened via joinShare() would silently lose its isShared/
+    // shareReadOnly/shareRole, so EditorHost's isLockedForMe() would never
+    // lock it: a read-only peer could type freely (never broadcast, but
+    // wiped the moment a real edit/resync came in — looked like the owner
+    // "erasing" the peer's changes).
+    isShared: partial.isShared,
+    shareId: partial.shareId,
+    shareReadOnly: partial.shareReadOnly,
+    shareRole: partial.shareRole,
+    shareWordWrap: partial.shareWordWrap,
   };
   initialContents.set(tab.id, content);
   tabsStore.set((s) => ({ tabs: [...s.tabs, tab], activeId: tab.id }));

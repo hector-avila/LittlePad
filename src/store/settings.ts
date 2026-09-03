@@ -2,9 +2,8 @@ import { createStore } from './createStore';
 
 /**
  * A key combination. Every action requires Ctrl/Cmd, except `columnMode`
- * (see `shortcutRequiresCtrl`), which instead requires Alt — it's an
- * Alt+Shift+Insert-style combo by default and would collide with normal
- * typing if it didn't require some modifier.
+ * (which instead requires Alt) and `findNext` (which needs no modifier at
+ * all, e.g. the default F3) — see `shortcutModifierRequirement`.
  */
 export interface Shortcut {
   key: string;
@@ -25,6 +24,7 @@ export type ActionId =
   | 'unfoldAll'
   | 'find'
   | 'replace'
+  | 'findNext'
   | 'nextTab'
   | 'previousTab'
   | 'duplicateLine'
@@ -46,6 +46,7 @@ export const ACTION_ORDER: ActionId[] = [
   'unfoldAll',
   'find',
   'replace',
+  'findNext',
   'nextTab',
   'previousTab',
   'duplicateLine',
@@ -68,6 +69,7 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   unfoldAll: 'Unfold all',
   find: 'Find',
   replace: 'Replace',
+  findNext: 'Find next (Shift: find previous)',
   nextTab: 'Next tab',
   previousTab: 'Previous tab',
   duplicateLine: 'Duplicate line/selection',
@@ -79,9 +81,17 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   columnMode: 'Column (multi-cursor) edit mode',
 };
 
-/** `columnMode` doesn't need Ctrl/Cmd — it requires Alt instead (see `Shortcut`). */
-export function shortcutRequiresCtrl(id: ActionId): boolean {
-  return id !== 'columnMode';
+/**
+ * What modifier a shortcut recording must include: `columnMode` requires
+ * Alt (or Ctrl) instead of Ctrl, `findNext` needs no modifier at all (it's
+ * a bare key like F3), and every other action requires Ctrl/Cmd.
+ */
+export type ModifierRequirement = 'ctrl' | 'ctrlOrAlt' | 'none';
+
+export function shortcutModifierRequirement(id: ActionId): ModifierRequirement {
+  if (id === 'columnMode') return 'ctrlOrAlt';
+  if (id === 'findNext') return 'none';
+  return 'ctrl';
 }
 
 export type Shortcuts = Record<ActionId, Shortcut>;
@@ -97,6 +107,7 @@ const DEFAULT_SHORTCUTS: Shortcuts = {
   unfoldAll: { key: ']', ctrl: true, shift: false, alt: false },
   find: { key: 'f', ctrl: true, shift: false, alt: false },
   replace: { key: 'r', ctrl: true, shift: false, alt: false },
+  findNext: { key: 'f3', ctrl: false, shift: false, alt: false },
   nextTab: { key: 'pagedown', ctrl: true, shift: false, alt: false },
   previousTab: { key: 'pageup', ctrl: true, shift: false, alt: false },
   duplicateLine: { key: 'd', ctrl: true, shift: false, alt: false },
@@ -136,6 +147,20 @@ export const DEFAULT_SETTINGS_DIALOG_WIDTH = 680;
 export const DEFAULT_SETTINGS_DIALOG_HEIGHT = 580;
 export const MIN_SETTINGS_DIALOG_WIDTH = 420;
 export const MIN_SETTINGS_DIALOG_HEIGHT = 360;
+
+/**
+ * Width of the Find/Replace dialog's text inputs, as a percentage of the
+ * space available to them (the dialog's width minus that row's own
+ * buttons) — not of the whole window, so it stays meaningful regardless of
+ * how many buttons a given row has. Resizable by dragging the handle next
+ * to the input (see FindReplaceDialog.tsx), remembered across launches.
+ * Bounded well short of 100% as a floor/ceiling sanity check; the actual
+ * hard guarantee that a drag can never cover the row's buttons comes from a
+ * dynamically computed `max-width`, not from this constant.
+ */
+export const DEFAULT_FIND_INPUT_WIDTH_PERCENT = 50;
+export const MIN_FIND_INPUT_WIDTH_PERCENT = 20;
+export const MAX_FIND_INPUT_WIDTH_PERCENT = 90;
 
 /**
  * Extensions LittlePad's language detection recognizes (see
@@ -182,6 +207,22 @@ export interface Settings {
   associatedExtensions: string[];
   /** Settings dialog size, in px — resizable by dragging its corner, remembered across launches. */
   settingsDialogSize: { width: number; height: number };
+  /** Find/Replace dialog's text input width — see `DEFAULT_FIND_INPUT_WIDTH_PERCENT`. */
+  findReplaceInputWidthPercent: number;
+  /**
+   * Real-time sharing (see Settings → Share, services/shareClient.ts).
+   * `shareServerUrl` is the relay's address as the user typed it — e.g.
+   * `wss://my.domain/share`, `ws://192.168.1.10:7878`, or just
+   * `my.domain/share` (scheme optional, defaults to secure) — see
+   * `parseShareServerUrl` and SERVER.md. `shareApiKey` must be identical on
+   * every instance that should see each other's shared files — it's the
+   * tenant-grouping secret sent to the relay server, and (combined with
+   * each document's own password) half of the end-to-end encryption key.
+   * Like every other setting, both are stored in plain localStorage — no
+   * more and no less exposed than anything else here.
+   */
+  shareServerUrl: string;
+  shareApiKey: string;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -196,6 +237,9 @@ const DEFAULT_SETTINGS: Settings = {
     width: DEFAULT_SETTINGS_DIALOG_WIDTH,
     height: DEFAULT_SETTINGS_DIALOG_HEIGHT,
   },
+  findReplaceInputWidthPercent: DEFAULT_FIND_INPUT_WIDTH_PERCENT,
+  shareServerUrl: '',
+  shareApiKey: '',
 };
 
 // The only fixed, non-configurable shortcut left: Ctrl+Tab / Ctrl+Shift+Tab
@@ -239,6 +283,54 @@ function clampUiFontSize(size: number): number {
   return Math.min(MAX_UI_FONT_SIZE, Math.max(MIN_UI_FONT_SIZE, size));
 }
 
+function clampFindInputWidthPercent(percent: number): number {
+  return Math.min(MAX_FIND_INPUT_WIDTH_PERCENT, Math.max(MIN_FIND_INPUT_WIDTH_PERCENT, percent));
+}
+
+/** A parsed `shareServerUrl`, ready to connect a WebSocket to. */
+export interface ParsedShareServerUrl {
+  /** The ws(s):// base URL, with any path but no trailing slash — `''` if `shareServerUrl` is blank. */
+  url: string;
+  /** Set if `shareServerUrl` is non-blank but not a usable address. */
+  error: string | null;
+}
+
+const SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const WS_SCHEME_FOR: Record<string, string> = {
+  'http:': 'ws:',
+  'https:': 'wss:',
+  'ws:': 'ws:',
+  'wss:': 'wss:',
+};
+
+/**
+ * Parses the user-typed Share server URL (`Settings.shareServerUrl`) into a
+ * ready-to-use `ws(s)://host[:port][/path]` base — accepts `ws://`,
+ * `wss://`, or (for convenience, since people tend to think in browser
+ * URLs) `http://`/`https://`, mapped to `ws://`/`wss://` respectively; a
+ * missing scheme defaults to `wss://` (secure by default). Any path is
+ * kept as-is (this is what makes a custom path like `/share` work — see
+ * SERVER.md) with a trailing slash trimmed; `shareClient.ts` appends `/ws`
+ * to the result itself.
+ */
+export function parseShareServerUrl(input: string): ParsedShareServerUrl {
+  const trimmed = input.trim();
+  if (!trimmed) return { url: '', error: null };
+
+  let parsed: URL;
+  try {
+    parsed = new URL(SCHEME_RE.test(trimmed) ? trimmed : `wss://${trimmed}`);
+  } catch {
+    return { url: '', error: 'Invalid server URL' };
+  }
+  const wsScheme = WS_SCHEME_FOR[parsed.protocol];
+  if (!wsScheme) {
+    return { url: '', error: `Unsupported scheme "${parsed.protocol}" — use ws://, wss://, http://, or https://` };
+  }
+  const path = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/+$/, '');
+  return { url: `${wsScheme}//${parsed.host}${path}`, error: null };
+}
+
 function clampSettingsDialogSize(size: { width: number; height: number }): {
   width: number;
   height: number;
@@ -247,6 +339,25 @@ function clampSettingsDialogSize(size: { width: number; height: number }): {
     width: Math.max(MIN_SETTINGS_DIALOG_WIDTH, Math.round(size.width)),
     height: Math.max(MIN_SETTINGS_DIALOG_HEIGHT, Math.round(size.height)),
   };
+}
+
+/**
+ * One-time migration for settings saved by an earlier LittlePad version,
+ * which stored the Share server address as separate host/port/path/secure
+ * fields instead of one URL — reconstructs the equivalent URL from them so
+ * upgrading doesn't silently lose an already-configured server.
+ */
+function legacyShareServerUrl(parsed: Record<string, unknown>): string {
+  if (typeof parsed.shareServerHost !== 'string' || !parsed.shareServerHost.trim()) {
+    return DEFAULT_SETTINGS.shareServerUrl;
+  }
+  const scheme = parsed.shareServerSecure === true ? 'https' : 'http';
+  const port =
+    typeof parsed.shareServerPort === 'number' && parsed.shareServerPort > 0
+      ? `:${parsed.shareServerPort}`
+      : '';
+  const path = typeof parsed.shareServerPath === 'string' ? parsed.shareServerPath : '';
+  return `${scheme}://${parsed.shareServerHost}${port}${path}`;
 }
 
 function load(): Settings {
@@ -280,6 +391,16 @@ function load(): Settings {
         typeof parsed.settingsDialogSize.height === 'number'
           ? clampSettingsDialogSize(parsed.settingsDialogSize)
           : DEFAULT_SETTINGS.settingsDialogSize,
+      findReplaceInputWidthPercent:
+        typeof parsed.findReplaceInputWidthPercent === 'number' &&
+        Number.isFinite(parsed.findReplaceInputWidthPercent)
+          ? clampFindInputWidthPercent(parsed.findReplaceInputWidthPercent)
+          : DEFAULT_SETTINGS.findReplaceInputWidthPercent,
+      shareServerUrl:
+        typeof parsed.shareServerUrl === 'string'
+          ? parsed.shareServerUrl
+          : legacyShareServerUrl(parsed),
+      shareApiKey: typeof parsed.shareApiKey === 'string' ? parsed.shareApiKey : DEFAULT_SETTINGS.shareApiKey,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -355,6 +476,19 @@ export function setSettingsDialogSize(width: number, height: number): void {
 }
 
 /**
+ * Records the Find/Replace dialog's text input width (dragged via its own
+ * resize handle), as a percentage of the space available to it, so it's
+ * remembered next time.
+ */
+export function setFindReplaceInputWidthPercent(percent: number): void {
+  settingsStore.set((s) => ({
+    ...s,
+    findReplaceInputWidthPercent: clampFindInputWidthPercent(percent),
+  }));
+  persist();
+}
+
+/**
  * Sets the "normal" font size from Settings — the floor for Ctrl+Scroll
  * zoom. Also resets the current effective size to it (so the change is
  * immediately visible, not just a new floor for future zooming).
@@ -392,7 +526,32 @@ export function clearAssociatedExtensions(): void {
   persist();
 }
 
-export function matchesShortcut(e: KeyboardEvent, s: Shortcut): boolean {
+/** Stored as typed — see `parseShareServerUrl` for how it's actually used to connect. */
+export function setShareServerUrl(url: string): void {
+  settingsStore.set((s) => ({ ...s, shareServerUrl: url }));
+  persist();
+}
+
+export function setShareApiKey(apiKey: string): void {
+  settingsStore.set((s) => ({ ...s, shareApiKey: apiKey }));
+  persist();
+}
+
+/**
+ * The subset of a keyboard event `matchesShortcut`/`matchesShortcutKey`
+ * need — deliberately loose so callers can pass either a native
+ * `KeyboardEvent` (window/DOM event listeners) or React's synthetic
+ * `KeyboardEvent<T>` (JSX `onKeyDown` handlers) without converting between them.
+ */
+export interface ShortcutKeyEvent {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  key: string;
+}
+
+export function matchesShortcut(e: ShortcutKeyEvent, s: Shortcut): boolean {
   const mod = e.ctrlKey || e.metaKey;
   return (
     mod === s.ctrl &&
@@ -400,6 +559,17 @@ export function matchesShortcut(e: KeyboardEvent, s: Shortcut): boolean {
     e.altKey === s.alt &&
     e.key.toLowerCase() === s.key
   );
+}
+
+/**
+ * Like `matchesShortcut`, but ignores the Shift flag — for `findNext`,
+ * where Shift is used as a "find previous instead" direction modifier
+ * rather than being part of the shortcut's identity (so Shift+F3 works
+ * without needing a separate configurable action for it).
+ */
+export function matchesShortcutKey(e: ShortcutKeyEvent, s: Shortcut): boolean {
+  const mod = e.ctrlKey || e.metaKey;
+  return mod === s.ctrl && e.altKey === s.alt && e.key.toLowerCase() === s.key;
 }
 
 export function formatShortcut(s: Shortcut): string {

@@ -1,6 +1,7 @@
 mod commands;
 mod onboarding;
 mod session;
+mod share_crypto;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -87,6 +88,10 @@ pub fn run() {
             commands::register_file_association,
             commands::unregister_file_association,
             commands::remove_all_file_associations,
+            commands::share_generate_salt,
+            commands::share_derive_key,
+            commands::share_encrypt,
+            commands::share_decrypt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

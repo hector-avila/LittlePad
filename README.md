@@ -36,6 +36,9 @@ pasting.
 - **Fold sections of a file** (collapse/expand) to hide parts you don't
   need to look at right now — handy for long JSON/XML/YAML files.
 - **Pick your own editor font** from the ⚙ Settings screen.
+- **Share a file in real time** with other LittlePad instances (⚙ Settings
+  → Share) — end-to-end encrypted, relayed through a small server you run
+  yourself. See [SERVER.md](SERVER.md).
 - **Closing the app never asks "Are you sure?"** — it just remembers
   everything and picks up right where you left off next time.
 

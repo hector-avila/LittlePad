@@ -24,6 +24,10 @@ export function toMeta(tab: Tab): TabMeta {
     languageManual: tab.languageManual,
     dirty: tab.dirty,
     cursor: tab.cursor,
+    // Only for a joined (peer) share — never the owner's own, who must
+    // re-share explicitly (with a new password) after a restart. See
+    // types.ts's Tab/TabMeta doc comments and App.tsx's restore effect.
+    ...(tab.shareRole === 'peer' ? { shareId: tab.shareId, shareReadOnly: tab.shareReadOnly } : {}),
   };
 }
 

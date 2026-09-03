@@ -7,6 +7,10 @@
   --accent: #61afef;
   --border: #181a1f;
   --error: #e06c75;
+  /* Deliberately far from --accent/--error/every .lang-* chip color below,
+     so a shared tab reads as "special" at a glance instead of blending in
+     with the active-tab highlight or an error state. */
+  --share-accent: #f5a623;
   --font-ui: system-ui, 'Segoe UI', sans-serif;
   --font-mono-fallback: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
   --editor-font-family: var(--font-mono-fallback);
@@ -155,6 +159,20 @@ body {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
+/* A shared file's tab gets a colored underline — same background as every
+   other tab, just this one extra edge — so it's spottable at a glance
+   among a row of tabs, without relying on its title (which no longer says
+   "shared-N", see shareClient.ts's `joined` handler). */
+.tab.tab-is-shared {
+  box-shadow: inset 0 -3px 0 var(--share-accent);
+}
+
+.tab.tab-is-shared.active {
+  box-shadow:
+    inset 0 -3px 0 var(--share-accent),
+    inset 0 2px 0 var(--accent);
+}
+
 .tab-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -162,6 +180,11 @@ body {
 
 .tab-dirty {
   color: var(--accent);
+}
+
+.tab-shared {
+  font-size: calc(11px * var(--ui-font-scale));
+  flex: none;
 }
 
 .tab-badge {
@@ -398,9 +421,30 @@ body {
   gap: 6px;
 }
 
+/* Wraps every button in a row (the .* / Aa toggles, prev/next, or
+   Replace/Replace all) so its rendered width can be measured in JS and fed
+   back as `--fr-actions-width` — see FindReplaceDialog.tsx's
+   `observeResizableInput` — which the input's max-width below is capped
+   against, so resizing it can never push these out of view. */
+.fr-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
 .fr-row input[type='text'] {
-  flex: 1;
-  min-width: 0;
+  /* Actual width comes from an inline style driven by
+     `settings.findReplaceInputWidthPercent` (default 50%, see
+     FindReplaceDialog.tsx) — resizable by dragging the `.fr-drag-handle`
+     next to it, picked up via ResizeObserver and persisted for next time.
+     Capped so a drag can never cover this row's own buttons
+     (`--fr-actions-width`, kept in sync with their actual rendered width,
+     plus the handle and the row's own gaps around it — see
+     FindReplaceDialog.tsx's `HANDLE_RESERVED_PX`). */
+  flex: none;
+  min-width: 100px;
+  max-width: calc(100% - var(--fr-actions-width, 0px) - 22px);
   background: var(--bg);
   border: 1px solid #3b4048;
   color: var(--fg);
@@ -408,6 +452,37 @@ body {
   border-radius: 4px;
   font-size: calc(12px * var(--ui-font-scale));
   font-family: var(--font-ui);
+}
+
+/* The explicit "drag here to resize" target between an input and its row's
+   buttons — replaces relying on the input's own (easy-to-miss) native
+   resize corner. Spans the row's full height via `align-self: stretch`
+   (overriding `.fr-row`'s own `align-items: center`) so it reads as a
+   proper splitter, not just another inline element. */
+.fr-drag-handle {
+  flex: none;
+  align-self: stretch;
+  width: 10px;
+  cursor: col-resize;
+  position: relative;
+  touch-action: none;
+}
+
+.fr-drag-handle::after {
+  content: '';
+  position: absolute;
+  top: 15%;
+  bottom: 15%;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: #3b4048;
+  border-radius: 1px;
+}
+
+.fr-drag-handle:hover::after,
+.fr-drag-handle:active::after {
+  background: var(--accent);
 }
 
 .fr-row button {
@@ -423,11 +498,6 @@ body {
 
 .fr-row button:hover {
   background: var(--bg-active);
-}
-
-.fr-close {
-  border-color: transparent !important;
-  font-size: calc(15px * var(--ui-font-scale));
 }
 
 .fr-options {
@@ -459,7 +529,7 @@ body {
 }
 
 .fr-status {
-  margin-left: auto;
+  margin-right: auto;
   white-space: nowrap;
 }
 
@@ -707,6 +777,65 @@ body {
   border-color: var(--accent);
 }
 
+/* Full-width variant for longer values (Share server URL, API key…) — pair
+   with .settings-row-column so the label sits above it instead of being
+   squeezed into a space-between row. */
+.settings-wide-input {
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  font-size: calc(12.5px * var(--ui-font-scale));
+}
+
+/* ── Password inputs with a "show password" eye toggle ────── */
+/* Shrinks to fit its input by default (matching a fixed-width
+   .settings-number-input) — a flex-column parent's align-items:stretch
+   (e.g. .settings-row-column) would otherwise stretch it to the full row
+   width even though the input inside stays narrow. .password-field-wide
+   opts back into stretching, for pairing with .settings-wide-input. */
+.password-field {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start;
+}
+
+.password-field.password-field-wide {
+  align-self: stretch;
+  width: 100%;
+}
+
+.password-field input {
+  padding-right: 26px;
+}
+
+.password-eye-toggle {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  /* The 👁 glyph renders as plain (not full-color) text on some platforms
+     — without this it inherits the surrounding dark background's default
+     text color and all but disappears there. */
+  color: #fff;
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1;
+  padding: 3px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.password-eye-toggle:hover {
+  background: var(--bg-active);
+  opacity: 0.85;
+}
+
+.password-eye-toggle.active {
+  opacity: 1;
+}
+
 /* ── File associations (Windows/Linux interactive, macOS static) ────  */
 .ext-grid {
   display: flex;
@@ -792,6 +921,24 @@ body {
 }
 
 .settings-font-license button:hover {
+  color: var(--fg);
+}
+
+/* Inline text-link button inside a .settings-hint paragraph (e.g. the
+   Share section's link to SERVER.md) — same look as the font license links
+   above, generalized since it's used outside that specific section too. */
+.settings-hint button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.settings-hint button:hover {
   color: var(--fg);
 }
 
@@ -916,6 +1063,85 @@ body {
   margin: 0 0 16px;
 }
 
+/* ── Share (real-time file sharing) ────────────────────────── */
+.share-dialog {
+  min-width: 340px;
+  max-width: 420px;
+}
+
+.share-status {
+  margin: 6px 0 16px;
+  font-size: calc(11.5px * var(--ui-font-scale));
+}
+
+.share-status-connected {
+  color: var(--accent);
+}
+
+.share-status-error {
+  color: var(--error);
+}
+
+.share-status-connecting,
+.share-status-disconnected {
+  color: var(--fg-dim);
+}
+
+.share-list-row {
+  border-top: 1px solid var(--border);
+}
+
+.share-list-row:first-child {
+  border-top: none;
+}
+
+.share-connected-count {
+  color: var(--fg-dim);
+  font-size: calc(11px * var(--ui-font-scale));
+}
+
+.share-notifications {
+  position: fixed;
+  right: 14px;
+  bottom: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+}
+
+.share-notification {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-panel);
+  border: 1px solid #3b4048;
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 240px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.share-notification-icon {
+  font-size: calc(16px * var(--ui-font-scale));
+  flex: none;
+}
+
+.share-notification-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.share-notification-body strong {
+  font-size: calc(12.5px * var(--ui-font-scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── StatusBar ──────────────────────────────────────────── */
 .statusbar {
   display: flex;
@@ -992,6 +1218,27 @@ body {
 }
 
 .wrap-toggle.active {
+  background: var(--bg-active);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.share-toggle {
+  background: var(--bg-panel);
+  color: var(--fg-dim);
+  border: 1px solid #3b4048;
+  border-radius: 3px;
+  font-size: calc(11.5px * var(--ui-font-scale));
+  font-family: var(--font-ui);
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.share-toggle:hover {
+  border-color: var(--accent);
+}
+
+.share-toggle.active {
   background: var(--bg-active);
   color: var(--accent);
   border-color: var(--accent);

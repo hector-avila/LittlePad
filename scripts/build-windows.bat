@@ -4,7 +4,9 @@ REM Builds LittlePad for WINDOWS (plain .exe, no .msi/NSIS installer)
 REM NATIVELY. MUST run on Windows (cmd or PowerShell); does not use Docker.
 REM
 REM Usage:  scripts\build-windows.bat
-REM Output: .\out\
+REM Output: .\out\ — littlepad.exe (the app) and littlepad-relay-server.exe
+REM         (the optional share relay server — see Settings -> Share; run it
+REM         on whatever machine should host sharing, not necessarily here)
 REM
 REM Requirements (validated when run):
 REM   - Rust (stable):    https://rustup.rs
@@ -37,17 +39,17 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo "-- [1/3] Installing npm dependencies --"
+echo "-- [1/4] Installing npm dependencies --"
 call npm install
 if errorlevel 1 exit /b
 call npm ci
 if errorlevel 1 exit /b 1
 
-echo "-- [2/3] Generating icons from app-icon.svg --"
+echo "-- [2/4] Generating icons from app-icon.svg --"
 call npm run tauri icon app-icon.svg
 if errorlevel 1 exit /b 1
 
-echo "-- [3/3] Building (executable only) --"
+echo "-- [3/4] Building the app (executable only) --"
 call npm run tauri build -- --no-bundle
 if errorlevel 1 (
     echo.
@@ -59,8 +61,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo "-- [4/4] Building the share relay server --"
+call cargo build --release -p relay-server
+if errorlevel 1 exit /b 1
+
 if not exist out mkdir out
-copy /y "src-tauri\target\release\littlepad.exe" out\ >nul 2>nul
+REM "target\", not "src-tauri\target\" — src-tauri is a Cargo workspace
+REM member (see the root Cargo.toml, added for relay-server\); Cargo always
+REM builds workspace members into one shared target dir at the workspace root.
+REM Source name is "LittlePad.exe" — Cargo.toml's package name, case as-is
+REM (NTFS doesn't care, but this is the actual name cargo/tauri produce).
+copy /y "target\release\LittlePad.exe" out\ >nul 2>nul
+copy /y "target\release\littlepad-relay-server.exe" out\ >nul 2>nul
 
 echo.
 echo [OK] Windows build done - artifacts in .\out\

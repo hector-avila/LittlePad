@@ -28,6 +28,16 @@ pub struct TabMeta {
     pub language_manual: bool,
     pub dirty: bool,
     pub cursor: usize,
+    /// Set only for a tab that joined someone else's share (real-time file
+    /// sharing — see services/shareClient.ts) — never for the share's own
+    /// owner (services/session.ts's toMeta() omits it for that case), so on
+    /// restart an owner's tab always comes back as a plain local tab, while
+    /// a peer's offers to reconnect (password only) instead. `#[serde(default)]`
+    /// so older session files without these fields still load fine.
+    #[serde(rename = "shareId", default)]
+    pub share_id: Option<String>,
+    #[serde(rename = "shareReadOnly", default)]
+    pub share_read_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

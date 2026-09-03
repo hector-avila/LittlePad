@@ -32,7 +32,9 @@ scripts\build-windows.bat
 ```
 
 Builds natively on Windows (no Docker) and produces a plain `.exe` — no
-installer — at `out\littlepad.exe`.
+installer — at `out\littlepad.exe`, plus the share relay server (see
+[Share relay server](#share-relay-server) below) at
+`out\littlepad-relay-server.exe`.
 
 ## Linux
 
@@ -44,7 +46,9 @@ host — Linux, macOS, or Windows with Docker installed).
 ```
 
 Produces a plain executable — no `.deb`/`.rpm`/`.AppImage` — at
-`out/littlepad-linux-x86_64`. Uses named Docker volumes
+`out/littlepad-linux-x86_64`, plus the share relay server (see
+[Share relay server](#share-relay-server) below) at
+`out/littlepad-relay-server-linux-x86_64`. Uses named Docker volumes
 (`littlepad-cargo`, `littlepad-target-linux`) to keep rebuilds fast.
 
 ## macOS
@@ -68,6 +72,40 @@ notarization.
 open it, since it's unsigned — right-click → **Open** once, or run
 `xattr -cr LittlePad.app` if it was downloaded (clears the quarantine
 attribute).
+
+Also produces the share relay server (see [Share relay
+server](#share-relay-server) below) at `out/littlepad-relay-server`, for the
+current Mac's native architecture (not built as a universal binary even
+with `--universal` — it's a server you run yourself, not something Finder
+or Gatekeeper needs to open).
+
+## Share relay server
+
+`relay-server/` is a separate, standalone binary — a stateless WebSocket
+relay for the real-time file sharing feature (Settings → Share). It never
+persists anything to disk and never sees document content or passwords: it
+only relays already-encrypted bytes between LittlePad instances that share
+the same Share API key, plus the minimal metadata (filename, read-only
+flag) needed to list currently-shared files. See `relay-server/src/main.rs`
+for the full picture.
+
+```bash
+littlepad-relay-server --host 0.0.0.0 --port 7878 --base-path /some/path
+# all three flags are optional; --host/--port shown above are the defaults,
+# --base-path is empty (serves at "/ws") unless given
+```
+
+**[SERVER.md](SERVER.md)** is the full guide: every flag, how to point
+LittlePad's Settings → Share → Server URL at it (matching `--base-path`,
+if you set one), the security model, and copy-pasteable NGINX/Apache
+reverse proxy configs — including serving it at a custom URL path (e.g.
+`https://my.domain/share`) instead of a dedicated subdomain.
+
+`scripts/build-windows.bat` and `scripts/build-macos.sh` build it alongside
+the app; on Linux it's produced by `scripts/build-linux.sh` (see above).
+The published GitHub Release also attaches Linux x86_64 and arm64 builds
+directly (see `.github/workflows/release.yml`'s `build-relay` job) since
+self-hosting it on a Linux server is the expected common case.
 
 ## Building for every platform
 
@@ -102,27 +140,44 @@ src/                      Frontend (React + CodeMirror 6)
 ├── components/           TabBar (includes the ☰ menu), EditorHost,
 │                         StatusBar, Banner, FindReplaceDialog,
 │                         SettingsDialog, CloseConfirmDialog,
-│                         OnboardingDialog
+│                         OnboardingDialog, ShareDialog, ShareNotifications
 ├── editor/               CM6 language wiring + log highlighter
 ├── services/
 │   ├── detector.ts       heuristic language detection
 │   ├── formatter.ts      JSON/XML/YAML pretty-printers
 │   ├── session.ts        autosave with a 1.5s debounce / 5s max wait
 │   ├── backend.ts        Tauri IPC (with a localStorage fallback in-browser)
-│   └── editorBridge.ts   React ↔ EditorView bridge (incl. find/replace)
+│   ├── editorBridge.ts   React ↔ EditorView bridge (incl. find/replace,
+│   │                     and applying remote real-time edits)
+│   ├── shareClient.ts    real-time sharing: relay WebSocket client,
+│   │                     protocol, encryption orchestration
+│   ├── shareDiskSync.ts  two-way disk sync for a shared file saved locally
+│   └── fileMtimeTracker.ts  on-disk mtime baselines (shared by
+│                         externalChanges.ts and shareDiskSync.ts)
 └── store/                lightweight stores (useSyncExternalStore);
-                          settings.ts stores per-action shortcuts in
-                          localStorage
+                          settings.ts stores per-action shortcuts (and the
+                          Share server/API key) in localStorage
 
-src-tauri/src/            Backend (Rust)
+relay-server/src/         The share relay server (standalone binary — see
+                          "Share relay server" below), a separate Cargo
+                          workspace member from src-tauri/
+├── main.rs               CLI (--host/--port) + the axum WebSocket server
+├── protocol.rs           wire message types (mirrored in shareClient.ts)
+├── state.rs              in-memory-only tenant/share state
+└── ws.rs                 per-connection auth + message relay
+
+src-tauri/src/            Backend (Rust) — the desktop app itself
 ├── commands.rs           IPC commands (incl. get/set_data_dir,
-│                         get_launch_files, check_first_run, setup_shortcuts)
+│                         get_launch_files, check_first_run, setup_shortcuts,
+│                         and the share_* encryption commands)
 ├── session.rs            atomic-write session persistence; configurable
 │                         data directory (data_root, defaults to
 │                         $HOME/.littlepad); window position/size/maximized
 │                         state
-└── onboarding.rs         first-run desktop shortcut + PATH setup,
-                          per-platform (Windows/Linux/macOS)
+├── onboarding.rs         first-run desktop shortcut + PATH setup,
+│                         per-platform (Windows/Linux/macOS)
+└── share_crypto.rs       end-to-end encryption for shared documents
+                          (Argon2id key derivation + AES-256-GCM)
 ```
 
 Opening a file from the CLI while LittlePad is already running is handled

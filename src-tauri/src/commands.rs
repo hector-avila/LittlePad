@@ -212,3 +212,41 @@ pub fn remove_all_file_associations(
 pub fn platform_info() -> (String, String) {
     (std::env::consts::OS.into(), std::env::consts::ARCH.into())
 }
+
+/// A fresh random salt for `share_derive_key`, base64-encoded. Generated
+/// once by whoever shares a file; travels alongside the encrypted snapshot
+/// so joiners can derive the same key from their own copy of the password.
+#[tauri::command]
+pub fn share_generate_salt() -> String {
+    crate::share_crypto::generate_salt()
+}
+
+/// Derives the AES-256 key for a share from the Share API key and the
+/// document password (both required — see `share_crypto`), base64-encoded.
+/// Run once per share, on creation or on join; the frontend caches the
+/// result for that share's lifetime rather than re-deriving it per edit.
+#[tauri::command]
+pub fn share_derive_key(api_key: String, password: String, salt: String) -> Result<String, String> {
+    crate::share_crypto::derive_key(&api_key, &password, &salt)
+}
+
+#[derive(Debug, Serialize)]
+pub struct EncryptedPayload {
+    pub ciphertext: String,
+    pub iv: String,
+}
+
+/// Encrypts one message payload (a JSON-serialized edit, snapshot, etc.) for
+/// the wire. Generates a fresh nonce every call.
+#[tauri::command]
+pub fn share_encrypt(key: String, plaintext: String) -> Result<EncryptedPayload, String> {
+    let (ciphertext, iv) = crate::share_crypto::encrypt(&key, &plaintext)?;
+    Ok(EncryptedPayload { ciphertext, iv })
+}
+
+/// Decrypts one message payload. Fails generically (wrong password/API key
+/// or corrupted data — GCM can't tell those apart) rather than crashing.
+#[tauri::command]
+pub fn share_decrypt(key: String, ciphertext: String, iv: String) -> Result<String, String> {
+    crate::share_crypto::decrypt(&key, &ciphertext, &iv)
+}
