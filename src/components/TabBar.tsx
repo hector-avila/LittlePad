@@ -77,7 +77,7 @@ export default function TabBar({ onNewTab, onCloseTab, onOpenFile }: Props) {
             key={t.id}
             role="tab"
             aria-selected={t.id === activeId}
-            className={`tab ${t.id === activeId ? 'active' : ''}`}
+            className={`tab ${t.id === activeId ? 'active' : ''}${t.isShared ? ' tab-is-shared' : ''}`}
             onClick={() => setActive(t.id)}
             onDoubleClick={() => {
               setRenamingId(t.id);
@@ -88,6 +88,11 @@ export default function TabBar({ onNewTab, onCloseTab, onOpenFile }: Props) {
             }}
             title={t.filePath ?? t.title}
           >
+            {t.isShared && (
+              <span className="tab-shared" title={t.shareReadOnly ? 'Shared (read-only)' : 'Shared (editable)'}>
+                🔗
+              </span>
+            )}
             <span className={`tab-badge lang-${t.language}`}>{LANGUAGE_LABELS[t.language]}</span>
             {renamingId === t.id ? (
               <input

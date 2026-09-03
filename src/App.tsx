@@ -9,8 +9,12 @@ import CloseConfirmDialog from './components/CloseConfirmDialog';
 import OnboardingDialog from './components/OnboardingDialog';
 import ExternalChangeDialog from './components/ExternalChangeDialog';
 import UpdateDialog from './components/UpdateDialog';
+import ShareDialog from './components/ShareDialog';
+import ShareNotifications from './components/ShareNotifications';
+import { queueShareReconnect } from './store/share';
 import * as backend from './services/backend';
 import * as session from './services/session';
+import * as shareClient from './services/shareClient';
 import { editorBridge } from './services/editorBridge';
 import { seedFileMtime, checkForExternalChanges } from './services/externalChanges';
 import { checkForUpdate } from './services/updateCheck';
@@ -31,6 +35,7 @@ import {
 import {
   settingsStore,
   matchesShortcut,
+  matchesShortcutKey,
   zoomIn,
   zoomOut,
   resetFontSize,
@@ -81,6 +86,15 @@ export default function App() {
               languageManual: st.meta.languageManual,
               dirty: st.meta.dirty,
               cursor: st.meta.cursor,
+              // A tab that was part of a joined (peer) share when the app
+              // last closed (never set for an owner's own share — see
+              // types.ts's Tab/TabMeta doc comments): comes back locked
+              // (isLockedForMe, until reconnected) and showing its last
+              // synced content, and gets queued below to ask for the
+              // password to actually reconnect it.
+              ...(st.meta.shareId
+                ? { isShared: true, shareId: st.meta.shareId, shareReadOnly: st.meta.shareReadOnly, shareRole: 'peer' as const }
+                : {}),
             },
             st.content,
           );
@@ -88,6 +102,7 @@ export default function App() {
           // without this, the first focus check after startup would think
           // every restored file "changed" since it never recorded one.
           if (st.meta.filePath) void seedFileMtime(st.meta.id, st.meta.filePath);
+          if (st.meta.shareId) queueShareReconnect(st.meta.id);
         }
         const activeId = data.index?.activeTabId;
         if (activeId && data.tabs.some((t) => t.meta.id === activeId)) {
@@ -119,6 +134,12 @@ export default function App() {
       const update = await checkForUpdate();
       if (update) showUpdate(update);
     })();
+  }, []);
+
+  // Connect to the Share relay server, if configured (see Settings → Share).
+  useEffect(() => {
+    shareClient.connect();
+    return () => shareClient.disconnect();
   }, []);
 
   // Save the index whenever the structure/active tab changes
@@ -375,6 +396,17 @@ export default function App() {
         return;
       }
 
+      // Checked before the `mod` gate below: findNext (F3 by default) needs
+      // no modifier at all. This only fires when focus is somewhere neither
+      // the editor (EditorHost has its own handler, which stopPropagation()s)
+      // nor the Find/Replace dialog's own inputs (same reason) already
+      // caught it — e.g. focus is on the tab bar or elsewhere in the chrome.
+      if (matchesShortcutKey(e, settingsStore.get().shortcuts.findNext)) {
+        e.preventDefault();
+        editorBridge.repeatFind(e.shiftKey ? -1 : 1);
+        return;
+      }
+
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
 
@@ -474,6 +506,8 @@ export default function App() {
       <OnboardingDialog />
       <ExternalChangeDialog />
       <UpdateDialog />
+      <ShareDialog />
+      <ShareNotifications />
       {dragActive && (
         <div className="drag-overlay">
           <div className="drag-overlay-message">

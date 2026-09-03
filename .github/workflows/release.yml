@@ -49,7 +49,9 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          # "." (the repo root), not "src-tauri" — src-tauri became a Cargo
+          # workspace member when relay-server/ was added (see /Cargo.toml).
+          workspaces: .
 
       - name: System dependencies (Linux)
         if: matrix.platform == 'ubuntu-22.04'
@@ -106,3 +108,48 @@ jobs:
           # https://github.com/tauri-apps/tauri-action#inputsuploadplainbinary
           uploadPlainBinary: ${{ matrix.uploadPlainBinary }}
           args: ${{ matrix.args }}
+
+  # Builds the standalone share relay server (see relay-server/ and Settings
+  # -> Share) and attaches it to the same draft release as the app — Linux
+  # only, self-hosted-on-a-server being the expected deployment; Windows/
+  # macOS users who want to run it locally build it themselves
+  # (`cargo build --release -p relay-server`, already done by
+  # scripts/build-windows.bat and scripts/build-macos.sh).
+  build-relay:
+    needs: build
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            asset: littlepad-relay-server-linux-x86_64
+          - runner: ubuntu-22.04-arm
+            asset: littlepad-relay-server-linux-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      - name: Build relay server
+        run: cargo build --release -p relay-server
+
+      - name: Rename artifact
+        run: cp target/release/littlepad-relay-server ${{ matrix.asset }}
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: ${{ matrix.asset }}

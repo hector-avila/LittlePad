@@ -11,6 +11,9 @@ import {
   Prec,
   StateEffect,
   StateField,
+  Annotation,
+  ChangeSet,
+  Text,
   RangeSetBuilder,
   type SelectionRange,
 } from '@codemirror/state';
@@ -21,6 +24,7 @@ import {
   search,
   SearchQuery,
   setSearchQuery,
+  getSearchQuery,
   findNext as cmFindNext,
   findPrevious as cmFindPrevious,
   replaceNext as cmReplaceNext,
@@ -30,6 +34,7 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { languageExtension } from '../editor/languages';
 import { editorBridge, type FindQuery, type FindOutcome, type MatchCount } from '../services/editorBridge';
 import * as session from '../services/session';
+import * as shareClient from '../services/shareClient';
 import { detect } from '../services/detector';
 import { formatText } from '../services/formatter';
 import { cursorStore, columnModeStore, showBanner, toggleFind, toggleReplace } from '../store/misc';
@@ -39,11 +44,21 @@ import {
   getTab,
   updateTab,
   setLanguage,
+  isLockedForMe,
+  effectiveWordWrap,
 } from '../store/tabs';
-import { settingsStore, matchesShortcut, zoomIn, zoomOut } from '../store/settings';
+import { settingsStore, matchesShortcut, matchesShortcutKey, zoomIn, zoomOut } from '../store/settings';
 import { useStore } from '../store/createStore';
 import type { DetectedType } from '../types';
 import FindReplaceDialog from './FindReplaceDialog';
+
+/**
+ * Tags a transaction as having been applied from a remote real-time edit
+ * (see services/shareClient.ts) rather than typed locally — the
+ * `updateListener` below checks for it to avoid re-broadcasting an edit
+ * that just came in over the network.
+ */
+const remoteSyncAnnotation = Annotation.define<boolean>();
 
 const DETECT_DEBOUNCE_MS = 1200;
 
@@ -122,6 +137,7 @@ export default function EditorHost() {
   const currentIdRef = useRef<string | null>(null);
   const langCompartment = useRef(new Compartment()).current;
   const wrapCompartment = useRef(new Compartment()).current;
+  const shareLockCompartment = useRef(new Compartment()).current;
   const detectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const activeTab = tabs.find((t) => t.id === activeId);
 
@@ -135,6 +151,12 @@ export default function EditorHost() {
         updateTab(id, { dirty: true });
         session.scheduleSave(id);
         scheduleDetection(id, u.view);
+        // Broadcast to the other share participants, unless this change
+        // just came FROM one of them (see applyRemoteChanges/applyRemoteSnapshot
+        // below) — otherwise every remote edit would immediately echo back.
+        if (!u.transactions.some((tr) => tr.annotation(remoteSyncAnnotation))) {
+          shareClient.broadcastLocalEdit(id, u.changes.toJSON(), u.state.doc.length);
+        }
       }
       if (u.selectionSet || u.docChanged) {
         const head = u.state.selection.main.head;
@@ -144,14 +166,27 @@ export default function EditorHost() {
       }
     });
 
+    // For a shared tab, only the owner's instance may change the language
+    // (see shareClient.setShareLanguage) — everyone else's is dictated by
+    // Properties broadcasts, so their own auto-detection must stay silent.
+    const applyDetectedLanguage = (id: string, lang: DetectedType) => {
+      const tab = getTab(id);
+      if (tab?.isShared) {
+        if (tab.shareRole === 'owner') shareClient.setShareLanguage(id, lang, false);
+      } else {
+        setLanguage(id, lang, false);
+      }
+    };
+
     const scheduleDetection = (id: string, view: EditorView) => {
       clearTimeout(detectTimer.current);
       detectTimer.current = setTimeout(() => {
         const tab = getTab(id);
         if (!tab || tab.languageManual) return;
+        if (tab.isShared && tab.shareRole !== 'owner') return; // owner-decided; see applyDetectedLanguage
         const text = view.state.doc.sliceString(0, 64 * 1024);
         const lang = detect(text, tab.filePath);
-        if (lang !== tab.language) setLanguage(id, lang, false);
+        if (lang !== tab.language) applyDetectedLanguage(id, lang);
       }, DETECT_DEBOUNCE_MS);
     };
 
@@ -160,6 +195,16 @@ export default function EditorHost() {
     // whole text explicitly selected (e.g. Ctrl+A then paste) — never when
     // pasting into a document that still has other text left untouched.
     const handlePaste = (event: ClipboardEvent, pasteView: EditorView): boolean => {
+      // A read-only share (see isLockedForMe below): CodeMirror's own
+      // built-in paste handler already checks this, but this custom one
+      // runs first and dispatches unconditionally — without this check it
+      // would silently bypass the lock. The pasted text stays purely local
+      // (broadcastLocalEdit already refuses to send it), so previously it
+      // just got wiped by the next real edit from the owner.
+      if (pasteView.state.readOnly) {
+        event.preventDefault();
+        return true;
+      }
       const text = event.clipboardData?.getData('text/plain');
       if (text == null) return false;
       const normalized = text.replace(/\r\n|\r/g, '\n');
@@ -180,7 +225,7 @@ export default function EditorHost() {
           changes: { from: 0, to: state.doc.length, insert: finalText },
           selection: { anchor: finalText.length },
         });
-        setLanguage(id, lang, false);
+        applyDetectedLanguage(id, lang);
         if (result.ok) showBanner('Document formatted automatically');
         return true;
       }
@@ -315,6 +360,14 @@ export default function EditorHost() {
         toggleReplace();
         return true;
       }
+      // Shift is a "find previous instead" direction modifier here, not
+      // part of the shortcut's identity — see matchesShortcutKey.
+      if (matchesShortcutKey(event, shortcuts.findNext)) {
+        event.preventDefault();
+        event.stopPropagation();
+        repeatFind(event.shiftKey ? -1 : 1);
+        return true;
+      }
       return false;
     };
 
@@ -348,6 +401,10 @@ export default function EditorHost() {
     // cursors/selections at once via changeByRange.
     const duplicateSelectionOrLine = (v: EditorView): boolean => {
       const { state } = v;
+      // Custom command, unlike moveLineUp/moveLineDown below (built into
+      // @codemirror/commands, which already self-guard on this) — see the
+      // same note on handlePaste.
+      if (state.readOnly) return true;
       const changes = state.changeByRange((range) => {
         if (range.empty) {
           const line = state.doc.lineAt(range.from);
@@ -393,7 +450,7 @@ export default function EditorHost() {
       return false;
     };
 
-    const buildExtensions = (lang: DetectedType) => [
+    const buildExtensions = (lang: DetectedType, locked: boolean, wrap: boolean) => [
       basicSetup,
       keymap.of([indentWithTab]),
       Prec.highest(keymap.of(columnModeKeymap)),
@@ -405,13 +462,14 @@ export default function EditorHost() {
       EditorView.domEventHandlers({ paste: handlePaste }),
       oneDark,
       indentUnit.of('  '),
-      wrapCompartment.of(settingsStore.get().wordWrap ? [EditorView.lineWrapping] : []),
+      wrapCompartment.of(wrap ? [EditorView.lineWrapping] : []),
       langCompartment.of(languageExtension(lang)),
+      shareLockCompartment.of(EditorState.readOnly.of(locked)),
       updateListener,
     ];
 
     const view = new EditorView({
-      state: EditorState.create({ doc: '', extensions: buildExtensions('plain') }),
+      state: EditorState.create({ doc: '', extensions: buildExtensions('plain', false, settingsStore.get().wordWrap) }),
       parent: containerRef.current!,
     });
     viewRef.current = view;
@@ -424,7 +482,11 @@ export default function EditorHost() {
       return EditorState.create({
         doc: content,
         selection: { anchor: cursor },
-        extensions: buildExtensions(tab?.language ?? 'plain'),
+        extensions: buildExtensions(
+          tab?.language ?? 'plain',
+          isLockedForMe(tab),
+          effectiveWordWrap(tab, settingsStore.get().wordWrap),
+        ),
       });
     };
 
@@ -438,6 +500,17 @@ export default function EditorHost() {
       view.dispatch({ effects: setSearchQuery.of(query) });
       if (!query.valid) return { valid: false, found: false };
       return { valid: true, found: cmd(view) };
+    };
+
+    // F3/Shift+F3 (see handleFindReplaceToggleKey and App.tsx): repeats
+    // whichever search is already active in CodeMirror's own state, without
+    // rebuilding the query — works even if the Find/Replace dialog is
+    // closed, as long as a search was run at least once since it last opened.
+    const repeatFind = (direction: 1 | -1): FindOutcome => {
+      const query = getSearchQuery(view.state);
+      if (!query.valid || !query.search) return { valid: false, found: false };
+      const found = direction === 1 ? cmFindNext(view) : cmFindPrevious(view);
+      return { valid: true, found };
     };
 
     // ── API exposed to the rest of the app ───────────────────────────────
@@ -475,6 +548,56 @@ export default function EditorHost() {
           initialContents.set(tabId, content);
         }
       },
+      applyRemoteChanges: (tabId, changesJson, expectedDocLen) => {
+        try {
+          const changes = ChangeSet.fromJSON(changesJson);
+          if (tabId === currentIdRef.current) {
+            const prevState = view.state;
+            view.dispatch({ changes, annotations: remoteSyncAnnotation.of(true) });
+            if (view.state.doc.length !== expectedDocLen) {
+              view.setState(prevState); // roll back rather than leave a half-applied edit visible
+              return false;
+            }
+            return true;
+          }
+          const st = statesRef.current.get(tabId);
+          if (st) {
+            const tr = st.update({ changes, annotations: remoteSyncAnnotation.of(true) });
+            if (tr.state.doc.length !== expectedDocLen) return false;
+            statesRef.current.set(tabId, tr.state);
+            return true;
+          }
+          // Not yet activated: apply directly to the pending plain-text
+          // content (no live EditorState exists for it yet).
+          const content = initialContents.get(tabId);
+          if (content === undefined) return false;
+          const newDoc = changes.apply(Text.of(content.split('\n')));
+          if (newDoc.length !== expectedDocLen) return false;
+          initialContents.set(tabId, newDoc.toString());
+          return true;
+        } catch {
+          return false; // malformed/out-of-range ChangeSet: caller should resync
+        }
+      },
+      applyRemoteSnapshot: (tabId, content) => {
+        if (tabId === currentIdRef.current) {
+          view.dispatch({
+            changes: { from: 0, to: view.state.doc.length, insert: content },
+            annotations: remoteSyncAnnotation.of(true),
+          });
+          return;
+        }
+        const st = statesRef.current.get(tabId);
+        if (st) {
+          const tr = st.update({
+            changes: { from: 0, to: st.doc.length, insert: content },
+            annotations: remoteSyncAnnotation.of(true),
+          });
+          statesRef.current.set(tabId, tr.state);
+          return;
+        }
+        if (initialContents.has(tabId)) initialContents.set(tabId, content);
+      },
       getSelection: () => {
         const sel = view.state.selection.main;
         return view.state.sliceDoc(sel.from, sel.to);
@@ -484,6 +607,7 @@ export default function EditorHost() {
       focus: () => view.focus(),
       findNext: (q) => runQuery(q, cmFindNext),
       findPrevious: (q) => runQuery(q, cmFindPrevious),
+      repeatFind,
       replaceNext: (q) => runQuery(q, cmReplaceNext),
       replaceAll: (q) => runQuery(q, cmReplaceAll),
       countMatches: (q): MatchCount => {
@@ -546,15 +670,19 @@ export default function EditorHost() {
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // ── Word wrap toggle: apply to the currently active tab's view ─────────
+  // ── Word wrap: apply to the currently active tab's view whenever the
+  //    effective value changes — the global Settings toggle, OR (for a
+  //    shared tab) the owner's per-share override arriving via Properties
+  //    (see shareClient.setShareWordWrap) ───────────────────────────────
+  const activeWrap = effectiveWordWrap(activeTab, wordWrap);
   useEffect(() => {
     const view = viewRef.current;
-    if (!view) return;
+    if (!view || currentIdRef.current !== activeId) return;
     view.dispatch({
-      effects: wrapCompartment.reconfigure(wordWrap ? [EditorView.lineWrapping] : []),
+      effects: wrapCompartment.reconfigure(activeWrap ? [EditorView.lineWrapping] : []),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wordWrap]);
+  }, [activeWrap, activeId]);
 
   // ── Swap the EditorState when switching tabs ───────────────────────────
   useEffect(() => {
@@ -583,13 +711,16 @@ export default function EditorHost() {
       setColumnModeArmedRef.current(false);
       const state = statesRef.current.get(activeId) ?? createStateRef.current(activeId);
       view.setState(state);
-      // Make sure the state's language and word wrap match the current settings
+      // Make sure the state's language, word wrap and share lock match the
+      // current settings/tab (a background tab's state can be stale on any
+      // of these if they changed while it wasn't active).
       const tab = getTab(activeId);
       if (tab) {
         view.dispatch({
           effects: [
             langCompartment.reconfigure(languageExtension(tab.language)),
-            wrapCompartment.reconfigure(wordWrap ? [EditorView.lineWrapping] : []),
+            wrapCompartment.reconfigure(effectiveWordWrap(tab, wordWrap) ? [EditorView.lineWrapping] : []),
+            shareLockCompartment.reconfigure(EditorState.readOnly.of(isLockedForMe(tab))),
           ],
         });
         const head = view.state.selection.main.head;
@@ -611,6 +742,18 @@ export default function EditorHost() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeLang, activeId]);
+
+  // ── Lock/unlock the editor when the active tab's share permission changes
+  //    (e.g. its read-only flag flips, or its share is revoked) ───────────
+  const activeLocked = isLockedForMe(activeTab);
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || currentIdRef.current !== activeId) return;
+    view.dispatch({
+      effects: shareLockCompartment.reconfigure(EditorState.readOnly.of(activeLocked)),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLocked, activeId]);
 
   const editorStyle = {
     '--editor-font-family': fontFamily ? `"${fontFamily}", var(--font-mono-fallback)` : undefined,

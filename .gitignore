@@ -14,8 +14,12 @@ dist-ssr
 
 # Build outputs
 out/
-src-tauri/target/
+# "target/" (workspace root), not "src-tauri/target/" — src-tauri became a
+# Cargo workspace member when relay-server/ was added (see /Cargo.toml),
+# and Cargo builds every member into one shared target dir at the root.
+target/
 src-tauri/gen/
+src-tauri/icons/
 
 # Editor directories and files
 .vscode/*

@@ -43,14 +43,14 @@ if [[ "${1:-}" == "--universal" ]]; then
   TARGET_ARGS=(--target universal-apple-darwin)
 fi
 
-echo "── [1/3] Installing npm dependencies ──"
+echo "── [1/4] Installing npm dependencies ──"
 npm install
 npm ci
 
-echo "── [2/3] Generating icons from app-icon.svg ──"
+echo "── [2/4] Generating icons from app-icon.svg ──"
 npm run tauri icon app-icon.svg
 
-echo "── [3/3] Building (.app bundle, no .dmg) ──"
+echo "── [3/4] Building (.app bundle, no .dmg) ──"
 # --bundles app (not --no-bundle): produces LittlePad.app and nothing else
 # (no .dmg/.pkg), unlike the plain-binary builds on the other platforms.
 if [[ ${#TARGET_ARGS[@]} -gt 0 ]]; then
@@ -59,16 +59,24 @@ else
   npm run tauri build -- --bundles app
 fi
 
+echo "── [4/4] Building the share relay server (native arch only — it's a self-hosted server, not something Gatekeeper/Finder needs to open) ──"
+cargo build --release -p relay-server
+
 mkdir -p out
-BUNDLE_DIR="src-tauri/target/release/bundle/macos"
-[[ "${1:-}" == "--universal" ]] && BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
+# Note: "target/", not "src-tauri/target/" — src-tauri is a Cargo workspace
+# member (see the root Cargo.toml, added for relay-server/), and Cargo
+# always builds workspace members into one shared target dir at the
+# workspace root, regardless of which member's Cargo.toml you build from.
+BUNDLE_DIR="target/release/bundle/macos"
+[[ "${1:-}" == "--universal" ]] && BUNDLE_DIR="target/universal-apple-darwin/release/bundle/macos"
 rm -rf out/LittlePad.app
 cp -R "$BUNDLE_DIR/LittlePad.app" out/LittlePad.app
+cp -f target/release/littlepad-relay-server out/littlepad-relay-server
 # ditto (not zip): the standard macOS tool for zipping .app bundles without
 # corrupting resource forks/metadata that a plain `zip` can lose.
 ditto -c -k --sequesterRsrc --keepParent out/LittlePad.app out/LittlePad-macos.app.zip
 
-echo "✔ macOS OK — out/LittlePad.app (and out/LittlePad-macos.app.zip) ready"
+echo "✔ macOS OK — out/LittlePad.app, out/LittlePad-macos.app.zip, and out/littlepad-relay-server ready"
 echo "  Note: unsigned, not notarized. On first launch, Gatekeeper will likely"
 echo "  block it — right-click LittlePad.app → Open (once), or run:"
 echo "    xattr -cr out/LittlePad.app"

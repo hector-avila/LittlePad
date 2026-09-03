@@ -196,3 +196,44 @@ export async function saveWindowState(state: WindowState): Promise<void> {
   if (!isTauri) return;
   return invoke('save_window_state', { state });
 }
+
+/**
+ * A fresh random salt for `shareDeriveKey`, base64-encoded. See
+ * `services/shareClient.ts` and `src-tauri/src/share_crypto.rs`.
+ */
+export async function shareGenerateSalt(): Promise<string> {
+  if (!isTauri) throw new Error('Sharing requires the desktop app');
+  return invoke('share_generate_salt');
+}
+
+/**
+ * Derives the AES-256 key (base64) for a share from the Share API key and
+ * the document password — both required, neither alone is enough. Run once
+ * per share; the result should be cached for that share's lifetime, not
+ * re-derived per edit (Argon2id is deliberately slow).
+ */
+export async function shareDeriveKey(apiKey: string, password: string, salt: string): Promise<string> {
+  if (!isTauri) throw new Error('Sharing requires the desktop app');
+  return invoke('share_derive_key', { apiKey, password, salt });
+}
+
+export interface EncryptedPayload {
+  ciphertext: string;
+  iv: string;
+}
+
+/** Encrypts one message payload for the wire. Generates a fresh nonce every call. */
+export async function shareEncrypt(key: string, plaintext: string): Promise<EncryptedPayload> {
+  if (!isTauri) throw new Error('Sharing requires the desktop app');
+  return invoke('share_encrypt', { key, plaintext });
+}
+
+/**
+ * Decrypts one message payload. Rejects generically on a wrong key
+ * (wrong password, or a mismatched API key) — that failure IS the password
+ * check; there's no separate validation step.
+ */
+export async function shareDecrypt(key: string, ciphertext: string, iv: string): Promise<string> {
+  if (!isTauri) throw new Error('Sharing requires the desktop app');
+  return invoke('share_decrypt', { key, ciphertext, iv });
+}

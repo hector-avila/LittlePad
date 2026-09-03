@@ -1,7 +1,9 @@
 import { useStore } from '../store/createStore';
 import { cursorStore, columnModeStore, saveStore } from '../store/misc';
-import { tabsStore, setLanguage } from '../store/tabs';
+import { tabsStore, setLanguage, effectiveWordWrap, canControlShareProperties } from '../store/tabs';
 import { settingsStore, toggleWordWrap, formatShortcut } from '../store/settings';
+import { openCreateShareDialog, shareStore } from '../store/share';
+import * as shareClient from '../services/shareClient';
 import * as session from '../services/session';
 import { LANGUAGE_LABELS, type DetectedType } from '../types';
 
@@ -11,7 +13,11 @@ export default function StatusBar() {
   const save = useStore(saveStore);
   const { wordWrap, shortcuts } = useStore(settingsStore);
   const { armed: columnModeArmed } = useStore(columnModeStore);
+  const { shares } = useStore(shareStore);
   const tab = tabs.find((t) => t.id === activeId);
+  const connected = tab?.isShared ? shares.find((s) => s.shareId === tab.shareId)?.connected : undefined;
+  const ownShareProperties = canControlShareProperties(tab);
+  const wrapActive = tab ? effectiveWordWrap(tab, wordWrap) : wordWrap;
 
   return (
     <div className="statusbar">
@@ -21,9 +27,12 @@ export default function StatusBar() {
             <select
               className="lang-select"
               value={tab.language}
-              title="Text type (force manually)"
+              disabled={!ownShareProperties}
+              title={ownShareProperties ? 'Text type (force manually)' : "Text type — set by this share's owner"}
               onChange={(e) => {
-                setLanguage(tab.id, e.target.value as DetectedType, true);
+                const language = e.target.value as DetectedType;
+                if (tab.isShared) shareClient.setShareLanguage(tab.id, language, true);
+                else setLanguage(tab.id, language, true);
                 void session.flushMeta(tab.id);
               }}
             >
@@ -37,12 +46,27 @@ export default function StatusBar() {
           </span>
           <button
             type="button"
-            className={`wrap-toggle${wordWrap ? ' active' : ''}`}
-            title="Toggle word wrap"
-            aria-pressed={wordWrap}
-            onClick={() => toggleWordWrap()}
+            className={`wrap-toggle${wrapActive ? ' active' : ''}`}
+            title={ownShareProperties ? 'Toggle word wrap' : "Word wrap — set by this share's owner"}
+            aria-pressed={wrapActive}
+            disabled={!ownShareProperties}
+            onClick={() => (tab.isShared ? shareClient.setShareWordWrap(tab.id, !wrapActive) : toggleWordWrap())}
           >
             Wrap
+          </button>
+          <button
+            type="button"
+            className={`share-toggle${tab.isShared ? ' active' : ''}`}
+            title={
+              tab.isShared
+                ? `Shared${tab.shareReadOnly ? ' (read-only for others)' : ' (editable by others)'} — click to stop sharing`
+                : 'Share this file in real time'
+            }
+            aria-pressed={!!tab.isShared}
+            onClick={() => (tab.isShared ? shareClient.unshareTab(tab.id) : openCreateShareDialog(tab.id))}
+          >
+            🔗 {tab.isShared ? 'Shared' : 'Share'}
+            {connected !== undefined ? ` (${connected})` : ''}
           </button>
           <span>{tab.encoding.toUpperCase()}</span>
           {columnModeArmed && (

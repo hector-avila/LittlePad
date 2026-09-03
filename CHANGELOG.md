@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.0] - 2026-09-03
+
+- Share files in real time between LittlePad instances (Settings → Share),
+  self-hosted and end-to-end encrypted — see [SERVER.md](SERVER.md).
+- Share Settings: one Server URL field (supports a custom path), wider
+  inputs, and a link to SERVER.md.
+- Resizable find/replace input fields, remembered across launches.
+- Fixed a macOS bundle identifier warning when building
+  (`com.littlepad.app` → `com.littlepad.desktop`).
+
 ## [1.1.0] - 2026-08-28
 
 - Configurable interface text size, separate from the editor font.

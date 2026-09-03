@@ -29,4 +29,15 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  build: {
+    // Vite's default 500kB warning targets pages fetched over a network,
+    // where a large single chunk delays first paint. LittlePad is a Tauri
+    // desktop app: the bundle loads from local disk into the webview, so
+    // that tradeoff doesn't apply — splitting it up would only add
+    // complexity (lazy imports, loading states) for no real benefit here.
+    // Raised past the current build's size (~1.05MB) rather than disabled
+    // outright, so a genuinely runaway bundle would still warn.
+    chunkSizeWarningLimit: 2000,
+  },
 }));
