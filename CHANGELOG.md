@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.1] - 2026-09-04
+
+- Fixed the "Support ending for Intel-based Apps" warning on Apple Silicon
+  Macs (macOS release is now a single universal binary).
+
 ## [1.2.0] - 2026-09-03
 
 - Share files in real time between LittlePad instances (Settings → Share),
