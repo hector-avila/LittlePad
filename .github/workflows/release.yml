@@ -1,8 +1,9 @@
-# Builds LittlePad for Windows, macOS (Intel + Apple Silicon), and Linux.
-# Triggered by pushing a v* tag (e.g. v0.1.0) or manually from Actions.
-# Publishes plain executables for Windows/Linux, and a LittlePad.app bundle
-# (no .dmg) for macOS — see scripts/build-macos.sh for why macOS needs a
-# .app instead of a plain binary — as a draft Release on GitHub.
+# Builds LittlePad for Windows, macOS (universal: Intel + Apple Silicon in one
+# binary), and Linux. Triggered by pushing a v* tag (e.g. v0.1.0) or manually
+# from Actions. Publishes plain executables for Windows/Linux, and a
+# LittlePad.app bundle (no .dmg) for macOS — see scripts/build-macos.sh for
+# why macOS needs a .app instead of a plain binary — as a draft Release on
+# GitHub.
 name: release
 
 on:
@@ -18,11 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest        # Apple Silicon (arm64)
-            args: '--target aarch64-apple-darwin --bundles app'
-            uploadPlainBinary: false
-          - platform: macos-latest        # Intel (x86_64)
-            args: '--target x86_64-apple-darwin --bundles app'
+          - platform: macos-latest        # Universal (Intel + Apple Silicon)
+            args: '--target universal-apple-darwin --bundles app'
             uploadPlainBinary: false
           - platform: ubuntu-22.04        # plain executable
             args: '--no-bundle'
